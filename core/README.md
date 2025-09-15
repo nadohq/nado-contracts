@@ -1,6 +1,6 @@
-# Vertex EVM Contracts
+# Nado EVM Contracts
 
-EVM implementation of Vertex. A [Hardhat](https://hardhat.org/) project.
+EVM implementation of Nado. A [Hardhat](https://hardhat.org/) project.
 
 # Local Development
 

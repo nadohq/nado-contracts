@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import "prb-math/contracts/PRBMathSD59x18.sol";
-
 library MathSD21x18 {
-    using PRBMathSD59x18 for int256;
-
     int128 private constant ONE_X18 = 1000000000000000000;
     int128 private constant MIN_X18 = -0x80000000000000000000000000000000;
     int128 private constant MAX_X18 = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
@@ -76,14 +72,6 @@ library MathSD21x18 {
         unchecked {
             require(x != MIN_X18, ERR_OVERFLOW);
             return x < 0 ? -x : x;
-        }
-    }
-
-    function sqrt(int128 x) internal pure returns (int128) {
-        unchecked {
-            int256 result = int256(x).sqrt();
-            require(result >= MIN_X18 && result <= MAX_X18, ERR_OVERFLOW);
-            return int128(result);
         }
     }
 

@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import "hardhat/console.sol";
-
 import "./common/Constants.sol";
 import "./common/Errors.sol";
-import "./interfaces/engine/IProductEngine.sol";
-import "./interfaces/engine/IPerpEngine.sol";
-import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
-import "./PerpEngineLp.sol";
+import "./PerpEngineState.sol";
 
-contract PerpEngine is PerpEngineLp {
+contract PerpEngine is PerpEngineState {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -37,36 +32,27 @@ contract PerpEngine is PerpEngineLp {
     /// @notice adds a new product with default parameters
     function addProduct(
         uint32 productId,
-        address book,
         int128 sizeIncrement,
         int128 minSize,
-        int128 lpSpreadX18,
         RiskHelper.RiskStore calldata riskStore
     ) public onlyOwner {
         _addProductForId(
             productId,
             QUOTE_PRODUCT_ID,
-            book,
             sizeIncrement,
             minSize,
-            lpSpreadX18,
             riskStore
         );
 
-        states[productId] = State({
-            cumulativeFundingLongX18: 0,
-            cumulativeFundingShortX18: 0,
-            availableSettle: 0,
-            openInterest: 0
-        });
-
-        lpStates[productId] = LpState({
-            supply: 0,
-            lastCumulativeFundingX18: 0,
-            cumulativeFundingPerLpX18: 0,
-            base: 0,
-            quote: 0
-        });
+        _setState(
+            productId,
+            State({
+                cumulativeFundingLongX18: 0,
+                cumulativeFundingShortX18: 0,
+                availableSettle: 0,
+                openInterest: 0
+            })
+        );
     }
 
     /// @notice changes the configs of a product, if a new book is provided
@@ -92,10 +78,8 @@ contract PerpEngine is PerpEngineLp {
         _exchange().updateMarket(
             txn.productId,
             type(uint32).max,
-            address(0),
             txn.sizeIncrement,
-            txn.minSize,
-            txn.lpSpreadX18
+            txn.minSize
         );
     }
 
@@ -112,9 +96,8 @@ contract PerpEngine is PerpEngineLp {
 
         _updateBalance(state, balance, amountDelta, vQuoteDelta);
 
-        states[productId] = state;
-        balances[productId][subaccount] = balance;
-        _balanceUpdate(productId, subaccount);
+        _setBalanceAndUpdateBitmap(productId, subaccount, balance);
+        _setState(productId, state);
     }
 
     function settlePnl(bytes32 subaccount, uint256 productIds)
@@ -130,8 +113,6 @@ contract PerpEngine is PerpEngineLp {
             if (productId % 2 == 0) {
                 (
                     int128 canSettle,
-                    LpState memory lpState,
-                    LpBalance memory lpBalance,
                     State memory state,
                     Balance memory balance
                 ) = getSettlementState(productId, subaccount);
@@ -141,77 +122,44 @@ contract PerpEngine is PerpEngineLp {
 
                 totalSettled += canSettle;
 
-                lpStates[productId] = lpState;
-                states[productId] = state;
-                lpBalances[productId][subaccount] = lpBalance;
-                balances[productId][subaccount] = balance;
-                _balanceUpdate(productId, subaccount);
+                _setState(productId, state);
+                _setBalanceAndUpdateBitmap(productId, subaccount, balance);
             }
             productIds >>= 32;
         }
         return totalSettled;
     }
 
-    function calculatePositionPnl(
-        LpState memory lpState,
-        LpBalance memory lpBalance,
-        Balance memory balance,
-        uint32 productId
-    ) internal view returns (int128 positionPnl) {
+    function calculatePositionPnl(Balance memory balance, uint32 productId)
+        internal
+        returns (int128 positionPnl)
+    {
         int128 priceX18 = _risk(productId).priceX18;
-
-        (int128 ammBase, int128 ammQuote) = MathHelper.ammEquilibrium(
-            lpState.base,
-            lpState.quote,
-            priceX18
-        );
-
-        if (lpBalance.amount == 0) {
-            positionPnl = priceX18.mul(balance.amount) + balance.vQuoteBalance;
-        } else {
-            positionPnl =
-                priceX18.mul(
-                    balance.amount +
-                        ammBase.mul(lpBalance.amount).div(lpState.supply)
-                ) +
-                balance.vQuoteBalance +
-                ammQuote.mul(lpBalance.amount).div(lpState.supply);
-        }
+        positionPnl = priceX18.mul(balance.amount) + balance.vQuoteBalance;
+        emit PriceQuery(productId);
     }
 
     function getPositionPnl(uint32 productId, bytes32 subaccount)
         external
-        view
         returns (int128)
     {
-        (
-            LpState memory lpState,
-            LpBalance memory lpBalance,
-            ,
-            Balance memory balance
-        ) = getStatesAndBalances(productId, subaccount);
+        (, Balance memory balance) = getStateAndBalance(productId, subaccount);
 
-        return calculatePositionPnl(lpState, lpBalance, balance, productId);
+        return calculatePositionPnl(balance, productId);
     }
 
     function getSettlementState(uint32 productId, bytes32 subaccount)
         public
-        view
         returns (
             int128 availableSettle,
-            LpState memory lpState,
-            LpBalance memory lpBalance,
             State memory state,
             Balance memory balance
         )
     {
-        (lpState, lpBalance, state, balance) = getStatesAndBalances(
-            productId,
-            subaccount
-        );
+        (state, balance) = getStateAndBalance(productId, subaccount);
 
         availableSettle = MathHelper.min(
-            calculatePositionPnl(lpState, lpBalance, balance, productId),
+            calculatePositionPnl(balance, productId),
             state.availableSettle
         );
     }
@@ -246,29 +194,10 @@ contract PerpEngine is PerpEngineLp {
                     ) / 2;
                     state.cumulativeFundingLongX18 += fundingPerShare;
                     state.cumulativeFundingShortX18 -= fundingPerShare;
-
-                    LpState memory lpState = lpStates[productId];
-                    Balance memory tmp = Balance({
-                        amount: lpState.base,
-                        vQuoteBalance: 0,
-                        lastCumulativeFundingX18: lpState
-                            .lastCumulativeFundingX18
-                    });
-                    _updateBalance(state, tmp, 0, 0);
-                    if (lpState.supply != 0) {
-                        lpState.cumulativeFundingPerLpX18 += tmp
-                            .vQuoteBalance
-                            .div(lpState.supply);
-                    }
-                    lpState.lastCumulativeFundingX18 = state
-                        .cumulativeFundingLongX18;
-
-                    lpStates[productId] = lpState;
                     balance.vQuoteBalance = 0;
                 }
-                states[productId] = state;
-                balances[productId][subaccount] = balance;
-                _balanceUpdate(productId, subaccount);
+                _setState(productId, state);
+                _setBalanceAndUpdateBitmap(productId, subaccount, balance);
             }
         }
         return insurance;

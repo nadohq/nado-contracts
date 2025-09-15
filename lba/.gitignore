@@ -171,8 +171,8 @@ infra/out/*.json
 **/*.nix
 
 # local testing files
-vertex-utils/products/products.localhost.json
-vertex-utils/deployment/deployment.localhost.json
+nado-utils/products/products.localhost.json
+nado-utils/deployment/deployment.localhost.json
 engine/tests/test_local.rs
 
 # admin scripts

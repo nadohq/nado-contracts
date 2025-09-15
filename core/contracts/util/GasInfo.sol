@@ -34,6 +34,7 @@ contract GasInfo {
     ///         of padding to account for the fact that the input does not have a signature.
     /// @param _data Unsigned fully RLP-encoded transaction to get the L1 gas for.
     /// @return Amount of L1 gas used to publish the transaction.
+    // solhint-disable-next-line no-unused-vars
     function getL1GasUsed(bytes memory _data) public view returns (uint256) {
         return 0;
     }
@@ -42,6 +43,7 @@ contract GasInfo {
     ///         transaction, the current L1 base fee, and the various dynamic parameters.
     /// @param _data Unsigned fully RLP-encoded transaction to get the L1 fee for.
     /// @return L1 fee that should be paid for the tx
+    // solhint-disable-next-line no-unused-vars
     function getL1Fee(bytes memory _data) external view returns (uint256) {
         return 0;
     }

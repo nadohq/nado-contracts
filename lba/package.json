@@ -1,8 +1,8 @@
 {
-  "name": "vertex-lba",
+  "name": "nado-lba",
   "version": "3.4.0",
   "license": "UNLICENSED",
-  "description": "Vertex LBA contracts",
+  "description": "Nado LBA contracts",
   "scripts": {
     "prepare": "husky install",
     "lint": "eslint './**/*.ts' --fix && prettier --write './**/*.{ts,sol}' --loglevel silent && solhint --fix 'contracts/**/*.sol'",

@@ -13,6 +13,8 @@ interface IOffchainExchange {
         int128 amount,
         uint64 expiration,
         uint64 nonce,
+        uint128 appendix,
+        bool isolated,
         // whether this order is taking or making
         bool isTaker,
         // amount paid in fees (in quote)
@@ -29,13 +31,8 @@ interface IOffchainExchange {
     );
 
     struct FeeRates {
-        int64 makerRateX18;
-        int64 takerRateX18;
-        uint8 isNonDefault; // 1: non-default, 0: default
-    }
-
-    struct LpParams {
-        int128 lpSpreadX18;
+        int128 makerRateX18;
+        int128 takerRateX18;
     }
 
     struct MarketInfoStore {
@@ -53,20 +50,13 @@ interface IOffchainExchange {
 
     function initialize(address _clearinghouse, address _endpoint) external;
 
-    function updateFeeRates(
-        address user,
-        uint32 productId,
-        int64 makerRateX18,
-        int64 takerRateX18
-    ) external;
+    function updateFeeTier(address user, uint32 newTier) external;
 
     function updateMarket(
         uint32 productId,
         uint32 quoteId,
-        address virtualBook,
         int128 sizeIncrement,
-        int128 minSize,
-        int128 lpSpreadX18
+        int128 minSize
     ) external;
 
     function getMinSize(uint32 productId) external view returns (int128);
@@ -82,18 +72,6 @@ interface IOffchainExchange {
         external
         view
         returns (MarketInfo memory);
-
-    function getLpParams(uint32 productId)
-        external
-        view
-        returns (LpParams memory);
-
-    function swapAMM(IEndpoint.SwapAMM calldata tx) external;
-
-    function matchOrderAMM(
-        IEndpoint.MatchOrderAMM calldata tx,
-        address takerLinkedSigner
-    ) external;
 
     function matchOrders(IEndpoint.MatchOrdersWithSigner calldata tx) external;
 
@@ -115,4 +93,7 @@ interface IOffchainExchange {
         returns (bytes32);
 
     function tryCloseIsolatedSubaccount(bytes32 subaccount) external;
+
+    function updateTierFeeRates(IEndpoint.UpdateTierFeeRates memory txn)
+        external;
 }

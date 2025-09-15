@@ -3,16 +3,12 @@ pragma solidity ^0.8.0;
 
 import "./common/Constants.sol";
 import "./common/Errors.sol";
-import "./interfaces/engine/ISpotEngine.sol";
-import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./libraries/RiskHelper.sol";
-import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
-import "./SpotEngineLP.sol";
 
-contract SpotEngine is SpotEngineLP {
+contract SpotEngine is SpotEngineState {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -29,7 +25,9 @@ contract SpotEngine is SpotEngineLP {
             interestInflectionUtilX18: 8e17, // .8
             interestFloorX18: 1e16, // .01
             interestSmallCapX18: 4e16, // .04
-            interestLargeCapX18: ONE // 1
+            interestLargeCapX18: ONE, // 1
+            withdrawFeeX18: ONE, // 1
+            minDepositRateX18: 0 // 0
         });
         _risk().value[QUOTE_PRODUCT_ID] = RiskHelper.RiskStore({
             longWeightInitial: 1e9,
@@ -38,12 +36,15 @@ contract SpotEngine is SpotEngineLP {
             shortWeightMaintenance: 1e9,
             priceX18: ONE
         });
-        states[QUOTE_PRODUCT_ID] = State({
-            cumulativeDepositsMultiplierX18: ONE,
-            cumulativeBorrowsMultiplierX18: ONE,
-            totalDepositsNormalized: 0,
-            totalBorrowsNormalized: 0
-        });
+        _setState(
+            QUOTE_PRODUCT_ID,
+            State({
+                cumulativeDepositsMultiplierX18: ONE,
+                cumulativeBorrowsMultiplierX18: ONE,
+                totalDepositsNormalized: 0,
+                totalBorrowsNormalized: 0
+            })
+        );
         productIds.push(QUOTE_PRODUCT_ID);
         emit AddProduct(QUOTE_PRODUCT_ID);
     }
@@ -68,37 +69,24 @@ contract SpotEngine is SpotEngineLP {
     function addProduct(
         uint32 productId,
         uint32 quoteId,
-        address book,
         int128 sizeIncrement,
         int128 minSize,
-        int128 lpSpreadX18,
         Config calldata config,
         RiskHelper.RiskStore calldata riskStore
     ) public onlyOwner {
         require(productId != QUOTE_PRODUCT_ID);
-        _addProductForId(
-            productId,
-            quoteId,
-            book,
-            sizeIncrement,
-            minSize,
-            lpSpreadX18,
-            riskStore
-        );
+        _addProductForId(productId, quoteId, sizeIncrement, minSize, riskStore);
 
         configs[productId] = config;
-        states[productId] = State({
-            cumulativeDepositsMultiplierX18: ONE,
-            cumulativeBorrowsMultiplierX18: ONE,
-            totalDepositsNormalized: 0,
-            totalBorrowsNormalized: 0
-        });
-
-        lpStates[productId] = LpState({
-            supply: 0,
-            quote: Balance({amount: 0, lastCumulativeMultiplierX18: ONE}),
-            base: Balance({amount: 0, lastCumulativeMultiplierX18: ONE})
-        });
+        _setState(
+            productId,
+            State({
+                cumulativeDepositsMultiplierX18: ONE,
+                cumulativeBorrowsMultiplierX18: ONE,
+                totalDepositsNormalized: 0,
+                totalBorrowsNormalized: 0
+            })
+        );
     }
 
     function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
@@ -125,10 +113,8 @@ contract SpotEngine is SpotEngineLP {
             _exchange().updateMarket(
                 txn.productId,
                 type(uint32).max,
-                address(0),
                 txn.sizeIncrement,
-                txn.minSize,
-                txn.lpSpreadX18
+                txn.minSize
             );
         }
 
@@ -143,7 +129,7 @@ contract SpotEngine is SpotEngineLP {
         State memory state = states[QUOTE_PRODUCT_ID];
         BalanceNormalized memory balanceNormalized = balances[QUOTE_PRODUCT_ID][
             subaccount
-        ].balance;
+        ];
         int128 balanceAmount = balanceNormalizedToBalance(
             state,
             balanceNormalized
@@ -156,9 +142,49 @@ contract SpotEngine is SpotEngineLP {
             insurance -= topUpAmount;
             _updateBalanceNormalized(state, balanceNormalized, topUpAmount);
         }
-        states[QUOTE_PRODUCT_ID] = state;
-        balances[QUOTE_PRODUCT_ID][subaccount].balance = balanceNormalized;
+        _setState(QUOTE_PRODUCT_ID, state);
+        _setBalanceAndUpdateBitmap(
+            QUOTE_PRODUCT_ID,
+            subaccount,
+            balanceNormalized
+        );
         return insurance;
+    }
+
+    function getNlpUnlockedBalance(bytes32 subaccount)
+        external
+        returns (Balance memory)
+    {
+        tryUnlockNlpBalance(subaccount);
+        Balance memory balanceSum = nlpLockedBalanceQueues[subaccount]
+            .unlockedBalanceSum;
+        return balanceSum;
+    }
+
+    function handleNlpLockedBalance(bytes32 subaccount, int128 amountDelta)
+        internal
+    {
+        _assertInternal();
+
+        // N_ACCOUNT is not limited by lock period
+        if (subaccount == N_ACCOUNT) return;
+
+        tryUnlockNlpBalance(subaccount);
+        if (amountDelta > 0) {
+            NlpLockedBalanceQueue storage queue = nlpLockedBalanceQueues[
+                subaccount
+            ];
+            queue.balances[queue.balanceCount] = NlpLockedBalance({
+                balance: Balance({amount: amountDelta}),
+                unlockedAt: getOracleTime() + NLP_LOCK_PERIOD
+            });
+            queue.balanceCount++;
+        } else if (amountDelta < 0) {
+            Balance memory balanceSum = nlpLockedBalanceQueues[subaccount]
+                .unlockedBalanceSum;
+            balanceSum.amount += amountDelta;
+            nlpLockedBalanceQueues[subaccount].unlockedBalanceSum = balanceSum;
+        }
     }
 
     function updateBalance(
@@ -172,24 +198,24 @@ contract SpotEngine is SpotEngineLP {
         State memory state = states[productId];
         State memory quoteState = states[QUOTE_PRODUCT_ID];
 
-        BalanceNormalized memory balance = balances[productId][subaccount]
-            .balance;
+        BalanceNormalized memory balance = balances[productId][subaccount];
 
         BalanceNormalized memory quoteBalance = balances[QUOTE_PRODUCT_ID][
             subaccount
-        ].balance;
+        ];
+
+        if (productId == NLP_PRODUCT_ID) {
+            handleNlpLockedBalance(subaccount, amountDelta);
+        }
 
         _updateBalanceNormalized(state, balance, amountDelta);
         _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
 
-        balances[productId][subaccount].balance = balance;
-        balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
+        _setBalanceAndUpdateBitmap(productId, subaccount, balance);
+        _setBalanceAndUpdateBitmap(QUOTE_PRODUCT_ID, subaccount, quoteBalance);
 
-        states[productId] = state;
-        states[QUOTE_PRODUCT_ID] = quoteState;
-
-        _balanceUpdate(productId, subaccount);
-        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
+        _setState(productId, state);
+        _setState(QUOTE_PRODUCT_ID, quoteState);
     }
 
     function updateBalance(
@@ -201,18 +227,20 @@ contract SpotEngine is SpotEngineLP {
 
         State memory state = states[productId];
 
-        BalanceNormalized memory balance = balances[productId][subaccount]
-            .balance;
-        _updateBalanceNormalized(state, balance, amountDelta);
-        balances[productId][subaccount].balance = balance;
+        if (productId == NLP_PRODUCT_ID) {
+            handleNlpLockedBalance(subaccount, amountDelta);
+        }
 
-        states[productId] = state;
-        _balanceUpdate(productId, subaccount);
+        BalanceNormalized memory balance = balances[productId][subaccount];
+        _updateBalanceNormalized(state, balance, amountDelta);
+
+        _setBalanceAndUpdateBitmap(productId, subaccount, balance);
+        _setState(productId, state);
     }
 
     // only check on withdraw -- ensure that users can't withdraw
-    // funds that are in the Vertex contract but not officially
-    // 'deposited' into the Vertex system and counted in balances
+    // funds that are in the Nado contract but not officially
+    // 'deposited' into the Nado system and counted in balances
     // (i.e. if a user transfers tokens to the clearinghouse
     // without going through the standard deposit)
     function assertUtilization(uint32 productId) external view {
@@ -236,7 +264,7 @@ contract SpotEngine is SpotEngineLP {
             State memory state = states[productId];
             Balance memory balance = balanceNormalizedToBalance(
                 state,
-                balances[productId][subaccount].balance
+                balances[productId][subaccount]
             );
             if (balance.amount < 0) {
                 int128 totalDeposited = state.totalDepositsNormalized.mul(
@@ -252,26 +280,12 @@ contract SpotEngine is SpotEngineLP {
                     state.cumulativeBorrowsMultiplierX18
                 );
 
-                balances[productId][subaccount].balance.amountNormalized = 0;
-
-                if (productId == QUOTE_PRODUCT_ID) {
-                    for (uint32 j = 0; j < _productIds.length; ++j) {
-                        uint32 baseProductId = _productIds[j];
-                        if (baseProductId == QUOTE_PRODUCT_ID) {
-                            continue;
-                        }
-                        LpState memory lpState = lpStates[baseProductId];
-                        _updateBalanceWithoutDelta(state, lpState.quote);
-                        lpStates[baseProductId] = lpState;
-                        _productUpdate(baseProductId);
-                    }
-                } else {
-                    LpState memory lpState = lpStates[productId];
-                    _updateBalanceWithoutDelta(state, lpState.base);
-                    lpStates[productId] = lpState;
-                }
-                states[productId] = state;
-                _balanceUpdate(productId, subaccount);
+                _setBalanceAndUpdateBitmap(
+                    productId,
+                    subaccount,
+                    BalanceNormalized({amountNormalized: 0})
+                );
+                _setState(productId, state);
             }
         }
     }

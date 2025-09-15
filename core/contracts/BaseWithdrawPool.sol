@@ -107,8 +107,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         int128 amountX18 = int128(amount) * int128(multiplier);
 
         int128 proportionalFeeX18 = FAST_WITHDRAWAL_FEE_RATE.mul(amountX18);
-        int128 minFeeX18 = 5 *
-            IClearinghouse(clearinghouse).getWithdrawFee(productId);
+        int128 minFeeX18 = 5 * spotEngine().getConfig(productId).withdrawFeeX18;
 
         int128 feeX18 = MathHelper.max(proportionalFeeX18, minFeeX18);
         return feeX18 / int128(multiplier);

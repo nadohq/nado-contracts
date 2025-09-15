@@ -1,6 +1,6 @@
-# Vertex LBA
+# Nado LBA
 
-Vertex LBA contracts.
+Nado LBA contracts.
 
 ## Dependencies
 

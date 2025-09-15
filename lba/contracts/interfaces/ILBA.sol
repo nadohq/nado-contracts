@@ -7,7 +7,7 @@ interface ILBA {
         DepositingTokens,
         WithdrawingUsdc,
         LBAFinished,
-        DepositedToVertex,
+        DepositedToNado,
         LpMinted,
         LpVesting,
         LpVested

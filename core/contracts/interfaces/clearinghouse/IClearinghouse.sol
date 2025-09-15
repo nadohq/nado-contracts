@@ -8,6 +8,13 @@ import "../IEndpointGated.sol";
 import "../../libraries/RiskHelper.sol";
 
 interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
+    event PriceQuery(uint32 productId);
+
+    struct NlpPoolRebalanceInfo {
+        bytes32 subaccount;
+        int128 balanceChange;
+    }
+
     function addEngine(
         address engine,
         address offchainExchange,
@@ -29,15 +36,19 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
         uint64 idx
     ) external;
 
-    function mintLp(IEndpoint.MintLp calldata tx) external;
+    function mintNlp(
+        IEndpoint.MintNlp calldata txn,
+        int128 oraclePriceX18,
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external;
 
-    function burnLp(IEndpoint.BurnLp calldata tx) external;
-
-    function mintVlp(IEndpoint.MintVlp calldata txn, int128 oraclePriceX18)
-        external;
-
-    function burnVlp(IEndpoint.BurnVlp calldata txn, int128 oraclePriceX18)
-        external;
+    function burnNlp(
+        IEndpoint.BurnNlp calldata txn,
+        int128 oraclePriceX18,
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external;
 
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
@@ -53,15 +64,11 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
     function rebalanceXWithdraw(bytes calldata transaction, uint64 nSubmissions)
         external;
 
-    function updateMinDepositRate(bytes calldata transaction) external;
-
-    function updateFeeRates(bytes calldata transaction) external;
+    function updateFeeTier(bytes calldata transaction) external;
 
     function updatePrice(bytes calldata transaction)
         external
         returns (uint32, int128);
-
-    function rebalanceVlp(bytes calldata transaction) external;
 
     function claimSequencerFees(int128[] calldata fees) external;
 
@@ -83,7 +90,6 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
     /// @notice Returns health for the subaccount across all engines
     function getHealth(bytes32 subaccount, IProductEngine.HealthType healthType)
         external
-        view
         returns (int128);
 
     /// @notice Returns the amount of insurance remaining in this clearinghouse
@@ -95,9 +101,6 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function getClearinghouseLiq() external view returns (address);
 
-    function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
-        external;
-
     function requireMinDeposit(uint32 productId, uint128 amount) external;
 
     function assertCode(bytes calldata tx) external;
@@ -108,7 +111,7 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function getSlowModeFee() external view returns (uint256);
 
-    function getWithdrawFee(uint32 productId) external view returns (int128);
-
     function setWithdrawPool(address _withdrawPool) external;
+
+    function clearNlpPoolPosition(bytes32 subaccount) external;
 }

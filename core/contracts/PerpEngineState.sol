@@ -16,9 +16,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
     mapping(uint32 => State) public states;
     mapping(uint32 => mapping(bytes32 => Balance)) public balances;
 
-    mapping(uint32 => LpState) public lpStates;
-    mapping(uint32 => mapping(bytes32 => LpBalance)) public lpBalances;
-
     function _updateBalance(
         State memory state,
         Balance memory balance,
@@ -49,17 +46,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         }
     }
 
-    function _applyLpBalanceFunding(
-        LpState memory lpState,
-        LpBalance memory lpBalance,
-        Balance memory balance
-    ) internal pure {
-        int128 vQuoteDelta = (lpState.cumulativeFundingPerLpX18 -
-            lpBalance.lastCumulativeFundingX18).mul(lpBalance.amount);
-        balance.vQuoteBalance += vQuoteDelta;
-        lpBalance.lastCumulativeFundingX18 = lpState.cumulativeFundingPerLpX18;
-    }
-
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
         public
         view
@@ -82,6 +68,22 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return balance;
     }
 
+    function _setState(uint32 productId, State memory state) internal {
+        states[productId] = state;
+        _productUpdate(productId);
+    }
+
+    function _setBalanceAndUpdateBitmap(
+        uint32 productId,
+        bytes32 subaccount,
+        Balance memory balance
+    ) internal {
+        balances[productId][subaccount] = balance;
+        bool hasBalance = balance.amount != 0 || balance.vQuoteBalance != 0;
+        _setProductBit(subaccount, productId, hasBalance);
+        _balanceUpdate(productId, subaccount);
+    }
+
     function _getBalance(uint32 productId, bytes32 subaccount)
         internal
         view
@@ -89,58 +91,8 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         override
         returns (int128, int128)
     {
-        State memory state = states[productId];
-        Balance memory balance = balances[productId][subaccount];
-        _updateBalance(state, balance, 0, 0);
+        Balance memory balance = getBalance(productId, subaccount);
         return (balance.amount, balance.vQuoteBalance);
-    }
-
-    function _getInLpBalance(uint32 productId, bytes32 subaccount)
-        internal
-        view
-        virtual
-        override
-        returns (
-            // baseAmount, quoteAmount, deltaQuoteAmount (funding)
-            int128,
-            int128,
-            int128
-        )
-    {
-        LpBalance memory lpBalance = lpBalances[productId][subaccount];
-        if (lpBalance.amount == 0) {
-            return (0, 0, 0);
-        }
-        LpState memory lpState = lpStates[productId];
-        int128 ratio = lpBalance.amount.div(lpState.supply);
-        int128 baseAmount = lpState.base.mul(ratio);
-        int128 quoteAmount = lpState.quote.mul(ratio);
-
-        int128 quoteDeltaAmount = lpState
-            .cumulativeFundingPerLpX18
-            .sub(lpBalance.lastCumulativeFundingX18)
-            .mul(lpBalance.amount);
-        return (baseAmount, quoteAmount, quoteDeltaAmount);
-    }
-
-    function getStatesAndBalances(uint32 productId, bytes32 subaccount)
-        public
-        view
-        returns (
-            LpState memory,
-            LpBalance memory,
-            State memory,
-            Balance memory
-        )
-    {
-        LpState memory lpState = lpStates[productId];
-        State memory state = states[productId];
-        LpBalance memory lpBalance = lpBalances[productId][subaccount];
-        Balance memory balance = balances[productId][subaccount];
-
-        _updateBalance(state, balance, 0, 0);
-        _applyLpBalanceFunding(lpState, lpBalance, balance);
-        return (lpState, lpBalance, state, balance);
     }
 
     function updateStates(uint128 dt, int128[] calldata avgPriceDiffs)
@@ -155,9 +107,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                 continue;
             }
             require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
-
-            LpState memory lpState = lpStates[productId];
-
             {
                 int128 indexPriceX18 = _risk(productId).priceX18;
 
@@ -184,25 +133,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                     paymentAmount
                 );
             }
-
-            {
-                Balance memory balance = Balance({
-                    amount: lpState.base,
-                    vQuoteBalance: 0,
-                    lastCumulativeFundingX18: lpState.lastCumulativeFundingX18
-                });
-                _updateBalance(state, balance, 0, 0);
-                if (lpState.supply != 0) {
-                    lpState.cumulativeFundingPerLpX18 += balance
-                        .vQuoteBalance
-                        .div(lpState.supply);
-                }
-                lpState.lastCumulativeFundingX18 = state
-                    .cumulativeFundingLongX18;
-            }
-            lpStates[productId] = lpState;
-            states[productId] = state;
-            _productUpdate(productId);
+            _setState(productId, state);
         }
     }
 }

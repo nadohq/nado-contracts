@@ -6,34 +6,10 @@ import "./interfaces/engine/IProductEngine.sol";
 abstract contract ClearinghouseStorage {
     using MathSD21x18 for int128;
 
-    struct LegacyHealthGroup {
-        uint32 spotId;
-        uint32 perpId;
-    }
-
-    struct LegacyRiskStore {
-        int32 longWeightInitial;
-        int32 shortWeightInitial;
-        int32 longWeightMaintenance;
-        int32 shortWeightMaintenance;
-        int32 largePositionPenalty;
-    }
-
-    uint32 internal maxHealthGroup; // deprecated
-    mapping(uint32 => LegacyHealthGroup) internal healthGroups; // deprecated
-    mapping(uint32 => LegacyRiskStore) internal risks; // deprecated
-
     // Each clearinghouse has a quote ERC20
     address internal quote;
-
     address internal clearinghouse;
     address internal clearinghouseLiq;
-
-    // fee calculator
-    address internal fees;
-
-    // Number of products registered across all engines
-    uint32 internal numProducts; // deprecated
 
     // product ID -> engine address
     mapping(uint32 => IProductEngine) internal productToEngine;
@@ -42,7 +18,6 @@ abstract contract ClearinghouseStorage {
     // Supported engine types
     IProductEngine.EngineType[] internal supportedEngines;
 
-    // insurance stuff, consider making it its own subaccount later
     int128 internal insurance;
 
     int128 internal lastLiquidationFees;
@@ -53,7 +28,6 @@ abstract contract ClearinghouseStorage {
 
     function getLiqPriceX18(uint32 productId, int128 amount)
         internal
-        view
         returns (int128, int128)
     {
         RiskHelper.Risk memory risk = IProductEngine(productToEngine[productId])
@@ -78,7 +52,6 @@ abstract contract ClearinghouseStorage {
         int128 amount
     )
         internal
-        view
         returns (
             int128,
             int128,

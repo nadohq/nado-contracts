@@ -10,7 +10,6 @@ import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IOffchainExchange.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
-import "./libraries/Logger.sol";
 import "./libraries/MathSD21x18.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
@@ -76,7 +75,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     /// @notice grab total subaccount health
     function getHealth(bytes32 subaccount, IProductEngine.HealthType healthType)
         public
-        view
         returns (int128 health)
     {
         ISpotEngine spotEngine = ISpotEngine(
@@ -143,6 +141,8 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             health += basisAmount
                 .mul(spotCoreRisk.price + perpCoreRisk.price)
                 .mul(spreadPenalty - existingPenalty);
+            emit PriceQuery(_spotId);
+            emit PriceQuery(_perpId);
         }
     }
 
@@ -197,7 +197,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
 
     function _decimals(uint32 productId) internal virtual returns (uint8) {
         IERC20Base token = IERC20Base(_tokenAddress(productId));
-        require(address(token) != address(0));
+        require(address(token) != address(0), ERR_INVALID_PRODUCT);
         return token.decimals();
     }
 
@@ -326,7 +326,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         IPerpEngine perpEngine = IPerpEngine(
             address(engineByType[IProductEngine.EngineType.PERP])
         );
-        int128 sumBase = 0;
         for (uint256 i = 0; i < txn.subaccounts.length; i++) {
             IPerpEngine.Balance memory balance = perpEngine.getBalance(
                 txn.productId,
@@ -334,15 +333,18 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             );
             int128 baseDelta = -balance.amount;
             int128 quoteDelta = -baseDelta.mul(txn.priceX18);
-            sumBase += baseDelta;
             perpEngine.updateBalance(
                 txn.productId,
                 txn.subaccounts[i],
                 baseDelta,
                 quoteDelta
             );
+            if (RiskHelper.isIsolatedSubaccount(txn.subaccounts[i])) {
+                IOffchainExchange(
+                    IEndpoint(getEndpoint()).getOffchainExchange()
+                ).tryCloseIsolatedSubaccount(txn.subaccounts[i]);
+            }
         }
-        require(sumBase == 0, ERR_INVALID_HOLDER_LIST);
     }
 
     function rebalanceXWithdraw(bytes calldata transaction, uint64 nSubmissions)
@@ -363,32 +365,16 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         );
     }
 
-    function updateMinDepositRate(bytes calldata transaction)
-        external
-        onlyEndpoint
-    {
-        IEndpoint.UpdateMinDepositRate memory txn = abi.decode(
+    function updateFeeTier(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.UpdateFeeTier memory txn = abi.decode(
             transaction[1:],
-            (IEndpoint.UpdateMinDepositRate)
-        );
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        spotEngine.updateMinDepositRate(txn.productId, txn.minDepositRateX18);
-    }
-
-    function updateFeeRates(bytes calldata transaction) external onlyEndpoint {
-        IEndpoint.UpdateFeeRates memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.UpdateFeeRates)
+            (IEndpoint.UpdateFeeTier)
         );
         address offchainExchange = IEndpoint(getEndpoint())
             .getOffchainExchange();
-        IOffchainExchange(offchainExchange).updateFeeRates(
+        IOffchainExchange(offchainExchange).updateFeeTier(
             txn.user,
-            txn.productId,
-            txn.makerRateX18,
-            txn.takerRateX18
+            txn.newTier
         );
     }
 
@@ -459,54 +445,43 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         emit ModifyCollateral(amountRealized, sender, productId);
     }
 
-    function mintLp(IEndpoint.MintLp calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function mintNlp(
+        IEndpoint.MintNlp calldata txn,
+        int128 oraclePriceX18,
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external onlyEndpoint {
         require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
-        require(txn.productId != QUOTE_PRODUCT_ID);
-        productToEngine[txn.productId].mintLp(
-            txn.productId,
-            txn.sender,
-            int128(txn.amountBase),
-            int128(txn.quoteAmountLow),
-            int128(txn.quoteAmountHigh)
+        require(
+            nlpPools.length == nlpPoolRebalanceX18.length,
+            ERR_INVALID_NLP_REBALANCE
         );
-        require(_isAboveInitial(txn.sender), ERR_SUBACCT_HEALTH);
-    }
-
-    function burnLp(IEndpoint.BurnLp calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
-        productToEngine[txn.productId].burnLp(
-            txn.productId,
-            txn.sender,
-            int128(txn.amount)
-        );
-    }
-
-    function mintVlp(IEndpoint.MintVlp calldata txn, int128 oraclePriceX18)
-        external
-        onlyEndpoint
-    {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
-        spotEngine.updatePrice(VLP_PRODUCT_ID, oraclePriceX18);
+        spotEngine.updatePrice(NLP_PRODUCT_ID, oraclePriceX18);
         require(txn.quoteAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
 
         int128 quoteAmount = int128(txn.quoteAmount);
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -quoteAmount);
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, quoteAmount);
+        int128 rebalanceAmount = 0;
+        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+            rebalanceAmount += nlpPoolRebalanceX18[i];
+            require(nlpPoolRebalanceX18[i] >= 0, ERR_INVALID_NLP_REBALANCE);
+        }
+        require(quoteAmount == rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
 
-        int128 vlpAmount = quoteAmount.div(oraclePriceX18);
-        spotEngine.updateBalance(VLP_PRODUCT_ID, txn.sender, vlpAmount);
-        spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, -vlpAmount);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -quoteAmount);
+        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+            spotEngine.updateBalance(
+                QUOTE_PRODUCT_ID,
+                nlpPools[i].subaccount,
+                nlpPoolRebalanceX18[i]
+            );
+        }
+
+        int128 nlpAmount = quoteAmount.div(oraclePriceX18);
+        spotEngine.updateBalance(NLP_PRODUCT_ID, txn.sender, nlpAmount);
+        spotEngine.updateBalance(NLP_PRODUCT_ID, N_ACCOUNT, -nlpAmount);
 
         require(
             getHealth(txn.sender, IProductEngine.HealthType.INITIAL) >= 0,
@@ -514,100 +489,59 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         );
     }
 
-    function burnVlp(IEndpoint.BurnVlp calldata txn, int128 oraclePriceX18)
-        external
-        onlyEndpoint
-    {
+    function burnNlp(
+        IEndpoint.BurnNlp calldata txn,
+        int128 oraclePriceX18,
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external onlyEndpoint {
         require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+        require(
+            nlpPools.length == nlpPoolRebalanceX18.length,
+            ERR_INVALID_NLP_REBALANCE
+        );
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
-        spotEngine.updatePrice(VLP_PRODUCT_ID, oraclePriceX18);
-        require(txn.vlpAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        spotEngine.updatePrice(NLP_PRODUCT_ID, oraclePriceX18);
+        require(txn.nlpAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
 
-        int128 vlpAmount = int128(txn.vlpAmount);
-        spotEngine.updateBalance(VLP_PRODUCT_ID, txn.sender, -vlpAmount);
-        spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, vlpAmount);
+        int128 nlpAmount = int128(txn.nlpAmount);
+        require(
+            spotEngine.getNlpUnlockedBalance(txn.sender).amount >= nlpAmount,
+            ERR_UNLOCKED_NLP_INSUFFICIENT
+        );
+        spotEngine.updateBalance(NLP_PRODUCT_ID, txn.sender, -nlpAmount);
+        spotEngine.updateBalance(NLP_PRODUCT_ID, N_ACCOUNT, nlpAmount);
 
-        int128 quoteAmount = vlpAmount.mul(oraclePriceX18);
+        int128 quoteAmount = nlpAmount.mul(oraclePriceX18);
         int128 burnFee = MathHelper.max(ONE, quoteAmount / 1000);
         quoteAmount = MathHelper.max(0, quoteAmount - burnFee);
 
-        if (quoteAmount != 0) {
-            spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
-            spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, -quoteAmount);
+        if (quoteAmount == 0) {
+            return;
+        }
+
+        int128 rebalanceAmount = 0;
+        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+            rebalanceAmount += nlpPoolRebalanceX18[i];
+            require(nlpPoolRebalanceX18[i] <= 0, ERR_INVALID_NLP_REBALANCE);
+        }
+        require(quoteAmount == -rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
+
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
+        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+            spotEngine.updateBalance(
+                QUOTE_PRODUCT_ID,
+                nlpPools[i].subaccount,
+                nlpPoolRebalanceX18[i]
+            );
         }
 
         require(
-            spotEngine.getBalance(VLP_PRODUCT_ID, txn.sender).amount >= 0,
+            spotEngine.getBalance(NLP_PRODUCT_ID, txn.sender).amount >= 0,
             ERR_SUBACCT_HEALTH
         );
-    }
-
-    function rebalanceVlp(bytes calldata transaction) external onlyEndpoint {
-        IEndpoint.RebalanceVlp memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.RebalanceVlp)
-        );
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
-        if (address(spotEngine) == address(productToEngine[txn.productId])) {
-            spotEngine.updateBalance(
-                txn.productId,
-                V_ACCOUNT,
-                txn.baseAmount,
-                txn.quoteAmount
-            );
-            spotEngine.updateBalance(
-                txn.productId,
-                X_ACCOUNT,
-                -txn.baseAmount,
-                -txn.quoteAmount
-            );
-        } else {
-            perpEngine.updateBalance(
-                txn.productId,
-                V_ACCOUNT,
-                txn.baseAmount,
-                txn.quoteAmount
-            );
-            perpEngine.updateBalance(
-                txn.productId,
-                X_ACCOUNT,
-                -txn.baseAmount,
-                -txn.quoteAmount
-            );
-        }
-    }
-
-    function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
-        require(
-            !RiskHelper.isIsolatedSubaccount(txn.recipient),
-            ERR_UNAUTHORIZED
-        );
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        require(spotEngine == productToEngine[txn.productId]);
-        (int128 amountBase, int128 amountQuote) = spotEngine.burnLp(
-            txn.productId,
-            txn.sender,
-            int128(txn.amount)
-        );
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -amountQuote);
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.recipient, amountQuote);
-        spotEngine.updateBalance(txn.productId, txn.sender, -amountBase);
-        spotEngine.updateBalance(txn.productId, txn.recipient, amountBase);
-        require(_isAboveInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
     function claimSequencerFees(int128[] calldata fees)
@@ -683,16 +617,12 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         }
     }
 
-    function _isAboveInitial(bytes32 subaccount) internal view returns (bool) {
+    function _isAboveInitial(bytes32 subaccount) internal returns (bool) {
         // Weighted initial health with limit orders < 0
         return getHealth(subaccount, IProductEngine.HealthType.INITIAL) >= 0;
     }
 
-    function _isUnderMaintenance(bytes32 subaccount)
-        internal
-        view
-        returns (bool)
-    {
+    function _isUnderMaintenance(bytes32 subaccount) internal returns (bool) {
         // Weighted maintenance health < 0
         return getHealth(subaccount, IProductEngine.HealthType.MAINTENANCE) < 0;
     }
@@ -723,6 +653,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
 
     function _getProxyManager() internal view returns (address) {
         AddressSlot storage proxyAdmin;
+        // solhint-disable-next-line no-inline-assembly
         assembly {
             proxyAdmin.slot := 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
         }
@@ -815,40 +746,53 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         return uint256(int256(SLOW_MODE_FEE) * multiplier);
     }
 
-    function getWithdrawFee(uint32 productId) external pure returns (int128) {
-        // TODO: use the map the store withdraw fees
-        // return withdrawFees[productId];
-        if (
-            productId == QUOTE_PRODUCT_ID ||
-            productId == 5 ||
-            productId == 31 ||
-            productId == 41 ||
-            productId == 109 ||
-            productId == 113 ||
-            productId == 115 ||
-            productId == 119 ||
-            productId == 121 ||
-            productId == 123 ||
-            productId == 125 ||
-            productId == 127 ||
-            productId == 145
-        ) {
-            // USDC, ARB, USDT, VRTX, MNT, BLAST (blast), WSEI, BENJI (base), TRUMP (arbi), TRUMP (base), HARRIS (arbi), HARRIS (base), wS
-            return 1e18;
-        } else if (productId == 1) {
-            // BTC
-            return 4e13;
-        } else if (
-            productId == 3 ||
-            productId == 91 ||
-            productId == 93 ||
-            productId == 111 ||
-            productId == 117 ||
-            productId == 149
-        ) {
-            // ETH (arbi), ETH (blast), ETH (mantle), METH, ETH (base), wstETH
-            return 6e14;
+    function clearNlpPoolPosition(bytes32 subaccount)
+        external
+        virtual
+        onlyEndpoint
+    {
+        require(subaccount != N_ACCOUNT, ERR_UNAUTHORIZED);
+
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        uint32[] memory spotProducts = spotEngine.getProductIds();
+
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+        uint32[] memory perpProducts = perpEngine.getProductIds();
+
+        for (uint32 i = 0; i < spotProducts.length; i++) {
+            uint32 productId = spotProducts[i];
+
+            ISpotEngine.Balance memory balance = spotEngine.getBalance(
+                productId,
+                subaccount
+            );
+            spotEngine.updateBalance(productId, subaccount, -balance.amount);
+            spotEngine.updateBalance(productId, N_ACCOUNT, balance.amount);
         }
-        return 0;
+
+        for (uint32 i = 0; i < perpProducts.length; i++) {
+            uint32 productId = perpProducts[i];
+
+            IPerpEngine.Balance memory balance = perpEngine.getBalance(
+                productId,
+                subaccount
+            );
+            perpEngine.updateBalance(
+                productId,
+                subaccount,
+                -balance.amount,
+                -balance.vQuoteBalance
+            );
+            perpEngine.updateBalance(
+                productId,
+                N_ACCOUNT,
+                balance.amount,
+                balance.vQuoteBalance
+            );
+        }
     }
 }

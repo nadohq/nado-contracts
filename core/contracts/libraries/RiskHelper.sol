@@ -44,28 +44,11 @@ library RiskHelper {
         return rebateRateX18.mul(priceSumX18).mul(basisAmount);
     }
 
-    function _getLpRawValue(
-        int128 baseAmount,
-        int128 quoteAmount,
-        int128 priceX18
-    ) internal pure returns (int128) {
-        // naive way: value an LP token by value of the raw components 2 * arithmetic mean of base value and quote value
-        // price manipulation proof way: use the geometric mean
-        return
-            2 *
-            int128(
-                MathHelper.sqrt256(
-                    int256(baseAmount.mul(priceX18)) * quoteAmount
-                )
-            );
-    }
-
     function _getWeightX18(
         Risk memory risk,
         int128 amount,
         IProductEngine.HealthType healthType
     ) internal pure returns (int128) {
-        // (1 + imf * sqrt(amount))
         if (healthType == IProductEngine.HealthType.PNL) {
             return ONE;
         }

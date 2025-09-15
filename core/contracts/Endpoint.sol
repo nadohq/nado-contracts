@@ -11,7 +11,6 @@ import "./EndpointGated.sol";
 import "./common/Errors.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
-import "./libraries/Logger.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IERC20Base.sol";
@@ -21,10 +20,10 @@ interface ISanctionsList {
     function isSanctioned(address addr) external view returns (bool);
 }
 
+// solhint-disable-next-line max-states-count
 contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     using ERC20Helper for IERC20Base;
 
-    IERC20Base private quote; // deprecated
     IClearinghouse public clearinghouse;
     ISpotEngine private spotEngine;
     IPerpEngine private perpEngine;
@@ -37,9 +36,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     mapping(uint64 => bytes32) internal subaccounts;
     uint64 internal numSubaccounts;
 
-    // healthGroup -> (spotPriceX18, perpPriceX18)
-    mapping(uint32 => Prices) private pricesX18; // deprecated
-    mapping(uint32 => address) private books; // deprecated
     mapping(address => uint64) internal nonces;
 
     uint64 public nSubmissions;
@@ -58,19 +54,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     mapping(bytes32 => address) internal linkedSigners;
 
+    mapping(bytes32 => address) internal nlpSigners;
+    NlpPool[] public nlpPools;
+
     int128 private slowModeFees;
 
     // invitee -> referralCode
     mapping(address => string) public referralCodes;
 
-    // address -> whether can call `BurnLpAndTransfer`.
-    mapping(address => bool) internal transferableWallets;
-
     mapping(uint32 => int128) internal priceX18;
     address internal offchainExchange;
 
     IVerifier private verifier;
-    address internal vertexGateway;
 
     function initialize(
         address _sanctions,
@@ -81,7 +76,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         int128[] memory initialPrices
     ) external initializer {
         __Ownable_init();
-        __EIP712_init("Vertex", "0.0.1");
+        __EIP712_init("Nado", "0.0.1");
         sequencer = _sequencer;
         clearinghouse = _clearinghouse;
         offchainExchange = _offchainExchange;
@@ -90,25 +85,26 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         spotEngine = ISpotEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
         );
-
         perpEngine = IPerpEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
         );
-
-        quote = IERC20Base(clearinghouse.getQuote());
-
         slowModeConfig = SlowModeConfig({timeout: 0, txCount: 0, txUpTo: 0});
-
         for (uint32 i = 0; i < initialPrices.length; i++) {
             priceX18[i] = initialPrices[i];
         }
+
+        if (nlpPools.length == 0) {
+            nlpPools.push(
+                NlpPool({
+                    poolId: 0,
+                    subaccount: N_ACCOUNT,
+                    owner: address(0),
+                    balanceWeightX18: uint128(ONE)
+                })
+            );
+        }
     }
 
-    // NOTE: we want DepositCollateral to be the first action anybody takes on Vertex
-    // so we can record the existence of their subaccount on-chain
-    // unfortunately, there are some edge cases where an empty account can place an order
-    // or do an AMM swap that passes health checks without going through a deposit, so
-    // we block those functions unless there has been a deposit first
     function _recordSubaccount(bytes32 subaccount) internal {
         if (subaccountIds[subaccount] == 0) {
             subaccountIds[subaccount] = ++numSubaccounts;
@@ -119,7 +115,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     function requireSubaccount(bytes32 subaccount) private view {
         require(
             subaccount == X_ACCOUNT ||
-                subaccount == V_ACCOUNT ||
+                subaccount == N_ACCOUNT ||
                 (subaccountIds[subaccount] != 0),
             ERR_REQUIRES_DEPOSIT
         );
@@ -177,6 +173,19 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 : linkedSigners[subaccount];
     }
 
+    function getLinkedSignerOrNlpSigner(bytes32 subaccount)
+        internal
+        view
+        virtual
+        returns (address)
+    {
+        address linkedSigner = getLinkedSigner(subaccount);
+        if (linkedSigner != address(0)) {
+            return linkedSigner;
+        }
+        return nlpSigners[subaccount];
+    }
+
     function validateSignature(
         bytes32 sender,
         bytes32 digest,
@@ -218,7 +227,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         address from,
         uint256 amount
     ) internal {
-        require(address(token) != address(0));
+        require(address(token) != address(0), ERR_INVALID_PRODUCT);
         safeTransferFrom(token, from, amount);
         safeTransferTo(token, address(clearinghouse), amount);
     }
@@ -274,9 +283,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     ) public {
         require(bytes(referralCode).length != 0);
         require(!RiskHelper.isIsolatedSubaccount(subaccount), ERR_UNAUTHORIZED);
-        if (subaccount == V_ACCOUNT) {
-            require(productId == 0, ERR_UNAUTHORIZED);
-        }
 
         address sender = address(bytes20(subaccount));
 
@@ -303,7 +309,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
 
         slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
-            executableAt: uint64(block.timestamp) + 259200, // hardcoded to three days
+            executableAt: uint64(block.timestamp) + SLOW_MODE_TX_DELAY, // hardcoded to three days
             sender: sender,
             tx: abi.encodePacked(
                 uint8(TransactionType.DepositCollateral),
@@ -319,9 +325,55 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         slowModeConfig = _slowModeConfig;
     }
 
-    function setVertexGateway(address _vertexGateway) external onlyOwner {
-        require(vertexGateway == address(0), "already set");
-        vertexGateway = _vertexGateway;
+    function addNlpPool(address owner, uint128 balanceWeightX18) private {
+        require(owner != address(0), "should have a owner.");
+        uint64 poolId = uint64(nlpPools.length);
+
+        bytes32 subaccount = NLP_POOL_ACCOUNT_START;
+        if (nlpPools.length > 1) {
+            subaccount = bytes32(
+                uint256(nlpPools[nlpPools.length - 1].subaccount) + 1
+            );
+        }
+        _recordSubaccount(subaccount);
+
+        nlpPools.push(
+            NlpPool({
+                poolId: poolId,
+                subaccount: subaccount,
+                owner: owner,
+                balanceWeightX18: balanceWeightX18
+            })
+        );
+        nlpSigners[subaccount] = owner;
+    }
+
+    function updateNlpPool(
+        uint64 poolId,
+        address owner,
+        uint128 balanceWeightX18
+    ) private {
+        require(poolId < nlpPools.length, ERR_INVALID_NLP_POOL);
+        if (poolId == 0) {
+            require(owner == address(0), "cannot set owner for pool 0.");
+            require(
+                balanceWeightX18 > 0,
+                "cannot set 0 balance weight for pool 0."
+            );
+        }
+        nlpPools[poolId].owner = owner;
+        nlpPools[poolId].balanceWeightX18 = balanceWeightX18;
+        nlpSigners[nlpPools[poolId].subaccount] = owner;
+    }
+
+    function deleteNlpPool(uint64 poolId) private {
+        require(poolId > 0 && poolId < nlpPools.length, ERR_INVALID_NLP_POOL);
+        clearinghouse.clearNlpPoolPosition(nlpPools[poolId].subaccount);
+        updateNlpPool(poolId, address(0), uint128(0));
+    }
+
+    function getNlpPools() external view returns (NlpPool[] memory) {
+        return nlpPools;
     }
 
     function requireUnsanctioned(address sender) internal view virtual {
@@ -345,46 +397,27 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (DepositInsurance)
             );
             handleDepositTransfer(_getQuote(), sender, uint256(txn.amount));
-        } else if (txType == TransactionType.UpdateProduct) {
-            require(sender == owner());
-        } else if (txType == TransactionType.BurnLpAndTransfer) {
-            require(transferableWallets[sender], ERR_WALLET_NOT_TRANSFERABLE);
-            BurnLpAndTransfer memory txn = abi.decode(
-                transaction[1:],
-                (BurnLpAndTransfer)
-            );
-            setReferralCode(
-                address(uint160(bytes20(txn.recipient))),
-                DEFAULT_REFERRAL_CODE
-            );
-        } else if (txType == TransactionType.WithdrawInsurance) {
-            require(sender == owner());
-        } else if (txType == TransactionType.DelistProduct) {
-            require(sender == owner());
-        } else if (txType == TransactionType.DumpFees) {
-            require(sender == owner());
-        } else if (txType == TransactionType.RebalanceXWithdraw) {
+        } else if (
+            txType == TransactionType.UpdateProduct ||
+            txType == TransactionType.WithdrawInsurance ||
+            txType == TransactionType.DelistProduct ||
+            txType == TransactionType.DumpFees ||
+            txType == TransactionType.RebalanceXWithdraw ||
+            txType == TransactionType.UpdateTierFeeRates ||
+            txType == TransactionType.AddNlpPool ||
+            txType == TransactionType.UpdateNlpPool ||
+            txType == TransactionType.DeleteNlpPool
+        ) {
             require(sender == owner());
         } else {
-            // xrpl, xrpl-testnet, xrpl-devnet
-            if (
-                sender == vertexGateway &&
-                txType == TransactionType.LinkSigner &&
-                (block.chainid == 1440000 ||
-                    block.chainid == 1449000 ||
-                    block.chainid == 1440002)
-            ) {
-                sender = address(this);
-            } else {
-                chargeSlowModeFee(_getQuote(), sender);
-                slowModeFees += SLOW_MODE_FEE;
-            }
+            chargeSlowModeFee(_getQuote(), sender);
+            slowModeFees += SLOW_MODE_FEE;
         }
 
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
         requireUnsanctioned(sender);
         slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
-            executableAt: uint64(block.timestamp) + 259200, // hardcoded to three days
+            executableAt: uint64(block.timestamp) + SLOW_MODE_TX_DELAY, // hardcoded to three days
             sender: sender,
             tx: transaction
         });
@@ -415,6 +448,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             this.processSlowModeTransaction(txn.sender, txn.tx);
         } else {
             uint256 gasRemaining = gasleft();
+            // solhint-disable-next-line no-empty-blocks
             try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
                 // we need to differentiate between a revert and an out of gas
                 // the issue is that in evm every inner call only 63/64 of the
@@ -428,6 +462,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 // this is good enough for our purposes
 
                 if (gasleft() <= 250000 || gasleft() <= gasRemaining / 2) {
+                    // solhint-disable-next-line no-inline-assembly
                     assembly {
                         invalid()
                     }
@@ -475,26 +510,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
         } else if (txType == TransactionType.DepositInsurance) {
             clearinghouse.depositInsurance(transaction);
-        } else if (txType == TransactionType.MintLp) {
-            MintLp memory txn = abi.decode(transaction[1:], (MintLp));
-            require(
-                clearinghouse.getEngineByProduct(txn.productId) ==
-                    clearinghouse.getEngineByType(
-                        IProductEngine.EngineType.SPOT
-                    ),
-                ERR_INVALID_PRODUCT
-            );
-            validateSender(txn.sender, sender);
-            clearinghouse.mintLp(txn);
-        } else if (txType == TransactionType.BurnLp) {
-            BurnLp memory txn = abi.decode(transaction[1:], (BurnLp));
-            validateSender(txn.sender, sender);
-            clearinghouse.burnLp(txn);
-        } else if (txType == TransactionType.SwapAMM) {
-            SwapAMM memory txn = abi.decode(transaction[1:], (SwapAMM));
-            validateSender(txn.sender, sender);
-            requireSubaccount(txn.sender);
-            IOffchainExchange(offchainExchange).swapAMM(txn);
         } else if (txType == TransactionType.UpdateProduct) {
             UpdateProduct memory txn = abi.decode(
                 transaction[1:],
@@ -506,14 +521,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             validateSender(txn.sender, sender);
             requireSubaccount(txn.sender);
             linkedSigners[txn.sender] = address(uint160(bytes20(txn.signer)));
-        } else if (txType == TransactionType.BurnLpAndTransfer) {
-            BurnLpAndTransfer memory txn = abi.decode(
-                transaction[1:],
-                (BurnLpAndTransfer)
-            );
-            validateSender(txn.sender, sender);
-            _recordSubaccount(txn.recipient);
-            clearinghouse.burnLpAndTransfer(txn);
         } else if (txType == TransactionType.WithdrawInsurance) {
             clearinghouse.withdrawInsurance(transaction, nSubmissions);
         } else if (txType == TransactionType.DelistProduct) {
@@ -530,6 +537,27 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             clearinghouse.claimSequencerFees(fees);
         } else if (txType == TransactionType.RebalanceXWithdraw) {
             clearinghouse.rebalanceXWithdraw(transaction, nSubmissions);
+        } else if (txType == TransactionType.UpdateTierFeeRates) {
+            UpdateTierFeeRates memory txn = abi.decode(
+                transaction[1:],
+                (UpdateTierFeeRates)
+            );
+            IOffchainExchange(offchainExchange).updateTierFeeRates(txn);
+        } else if (txType == TransactionType.AddNlpPool) {
+            AddNlpPool memory txn = abi.decode(transaction[1:], (AddNlpPool));
+            addNlpPool(txn.owner, txn.balanceWeightX18);
+        } else if (txType == TransactionType.UpdateNlpPool) {
+            UpdateNlpPool memory txn = abi.decode(
+                transaction[1:],
+                (UpdateNlpPool)
+            );
+            updateNlpPool(txn.poolId, txn.owner, txn.balanceWeightX18);
+        } else if (txType == TransactionType.DeleteNlpPool) {
+            DeleteNlpPool memory txn = abi.decode(
+                transaction[1:],
+                (DeleteNlpPool)
+            );
+            deleteNlpPool(txn.poolId);
         } else {
             revert();
         }
@@ -542,7 +570,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedLiquidateSubaccount)
             );
-            if (signedTx.tx.sender != V_ACCOUNT) {
+            if (signedTx.tx.sender != N_ACCOUNT) {
                 validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
                 validateSignature(
                     signedTx.tx.sender,
@@ -566,7 +594,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
             chargeFee(
                 signedTx.tx.sender,
-                clearinghouse.getWithdrawFee(signedTx.tx.productId),
+                spotEngine.getConfig(signedTx.tx.productId).withdrawFeeX18,
                 signedTx.tx.productId
             );
             clearinghouse.withdrawCollateral(
@@ -599,37 +627,48 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             }
         } else if (txType == TransactionType.SettlePnl) {
             clearinghouse.settlePnl(transaction);
-        } else if (
-            txType == TransactionType.MatchOrders ||
-            txType == TransactionType.MatchOrdersRFQ
-        ) {
+        } else if (txType == TransactionType.MatchOrders) {
             MatchOrders memory txn = abi.decode(transaction[1:], (MatchOrders));
             requireSubaccount(txn.taker.order.sender);
             requireSubaccount(txn.maker.order.sender);
+
             MatchOrdersWithSigner memory txnWithSigner = MatchOrdersWithSigner({
                 matchOrders: txn,
-                takerLinkedSigner: getLinkedSigner(txn.taker.order.sender),
-                makerLinkedSigner: getLinkedSigner(txn.maker.order.sender)
+                takerLinkedSigner: getLinkedSignerOrNlpSigner(
+                    txn.taker.order.sender
+                ),
+                makerLinkedSigner: getLinkedSignerOrNlpSigner(
+                    txn.maker.order.sender
+                ),
+                takerAmountDelta: 0
             });
             IOffchainExchange(offchainExchange).matchOrders(txnWithSigner);
-        } else if (txType == TransactionType.MatchOrderAMM) {
-            MatchOrderAMM memory txn = abi.decode(
+        } else if (txType == TransactionType.MatchOrdersWithAmount) {
+            MatchOrdersWithAmount memory txn = abi.decode(
                 transaction[1:],
-                (MatchOrderAMM)
+                (MatchOrdersWithAmount)
             );
-            requireSubaccount(txn.taker.order.sender);
-            IOffchainExchange(offchainExchange).matchOrderAMM(
-                txn,
-                getLinkedSigner(txn.taker.order.sender)
-            );
+            requireSubaccount(txn.matchOrders.taker.order.sender);
+            requireSubaccount(txn.matchOrders.maker.order.sender);
+            MatchOrdersWithSigner memory txnWithSigner = MatchOrdersWithSigner({
+                matchOrders: txn.matchOrders,
+                takerLinkedSigner: getLinkedSigner(
+                    txn.matchOrders.taker.order.sender
+                ),
+                makerLinkedSigner: getLinkedSigner(
+                    txn.matchOrders.maker.order.sender
+                ),
+                takerAmountDelta: txn.takerAmountDelta
+            });
+            IOffchainExchange(offchainExchange).matchOrders(txnWithSigner);
         } else if (txType == TransactionType.ExecuteSlowMode) {
             SlowModeConfig memory _slowModeConfig = slowModeConfig;
             _executeSlowModeTransaction(_slowModeConfig, true);
             slowModeConfig = _slowModeConfig;
-        } else if (txType == TransactionType.MintLp) {
-            SignedMintLp memory signedTx = abi.decode(
+        } else if (txType == TransactionType.MintNlp) {
+            SignedMintNlp memory signedTx = abi.decode(
                 transaction[1:],
-                (SignedMintLp)
+                (SignedMintNlp)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(
@@ -638,11 +677,17 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 signedTx.signature
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
-            clearinghouse.mintLp(signedTx.tx);
-        } else if (txType == TransactionType.BurnLp) {
-            SignedBurnLp memory signedTx = abi.decode(
+            priceX18[NLP_PRODUCT_ID] = signedTx.oraclePriceX18;
+            clearinghouse.mintNlp(
+                signedTx.tx,
+                signedTx.oraclePriceX18,
+                nlpPools,
+                signedTx.nlpPoolRebalanceX18
+            );
+        } else if (txType == TransactionType.BurnNlp) {
+            SignedBurnNlp memory signedTx = abi.decode(
                 transaction[1:],
-                (SignedBurnLp)
+                (SignedBurnNlp)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(
@@ -651,35 +696,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 signedTx.signature
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
-            clearinghouse.burnLp(signedTx.tx);
-        } else if (txType == TransactionType.MintVlp) {
-            SignedMintVlp memory signedTx = abi.decode(
-                transaction[1:],
-                (SignedMintVlp)
+            priceX18[NLP_PRODUCT_ID] = signedTx.oraclePriceX18;
+            clearinghouse.burnNlp(
+                signedTx.tx,
+                signedTx.oraclePriceX18,
+                nlpPools,
+                signedTx.nlpPoolRebalanceX18
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(
-                signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
-                signedTx.signature
-            );
-            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
-            priceX18[VLP_PRODUCT_ID] = signedTx.oraclePriceX18;
-            clearinghouse.mintVlp(signedTx.tx, signedTx.oraclePriceX18);
-        } else if (txType == TransactionType.BurnVlp) {
-            SignedBurnVlp memory signedTx = abi.decode(
-                transaction[1:],
-                (SignedBurnVlp)
-            );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(
-                signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
-                signedTx.signature
-            );
-            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
-            priceX18[VLP_PRODUCT_ID] = signedTx.oraclePriceX18;
-            clearinghouse.burnVlp(signedTx.tx, signedTx.oraclePriceX18);
         } else if (txType == TransactionType.ManualAssert) {
             clearinghouse.manualAssert(transaction);
         } else if (txType == TransactionType.LinkSigner) {
@@ -696,8 +719,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             linkedSigners[signedTx.tx.sender] = address(
                 uint160(bytes20(signedTx.tx.signer))
             );
-        } else if (txType == TransactionType.UpdateFeeRates) {
-            clearinghouse.updateFeeRates(transaction);
+        } else if (txType == TransactionType.UpdateFeeTier) {
+            clearinghouse.updateFeeTier(transaction);
         } else if (txType == TransactionType.TransferQuote) {
             SignedTransferQuote memory signedTx = abi.decode(
                 transaction[1:],
@@ -712,8 +735,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.transferQuote(signedTx.tx);
-        } else if (txType == TransactionType.UpdateMinDepositRate) {
-            clearinghouse.updateMinDepositRate(transaction);
         } else if (txType == TransactionType.AssertCode) {
             clearinghouse.assertCode(transaction);
         } else if (txType == TransactionType.CreateIsolatedSubaccount) {
@@ -727,8 +748,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                     getLinkedSigner(txn.order.sender)
                 );
             _recordSubaccount(newIsolatedSubaccount);
-        } else if (txType == TransactionType.RebalanceVlp) {
-            clearinghouse.rebalanceVlp(transaction);
         } else {
             revert();
         }
@@ -790,11 +809,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     function getPriceX18(uint32 productId)
         public
-        view
+        override
         returns (int128 _priceX18)
     {
         _priceX18 = priceX18[productId];
         require(_priceX18 != 0, ERR_INVALID_PRODUCT);
+        emit PriceQuery(productId);
     }
 
     function getTime() external view returns (uint128) {

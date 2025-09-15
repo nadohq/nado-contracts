@@ -5,6 +5,7 @@ import "./clearinghouse/IClearinghouse.sol";
 
 interface IEndpoint {
     event SubmitTransactions();
+    event PriceQuery(uint32 productId);
 
     // events that we parse transactions into
     enum TransactionType {
@@ -17,30 +18,25 @@ interface IEndpoint {
         MatchOrders,
         DepositInsurance,
         ExecuteSlowMode,
-        MintLp,
-        BurnLp,
-        SwapAMM,
-        MatchOrderAMM,
         DumpFees,
-        ClaimSequencerFees, // deprecated
         PerpTick,
         ManualAssert,
-        Rebate, // deprecated
         UpdateProduct,
         LinkSigner,
-        UpdateFeeRates,
-        BurnLpAndTransfer,
-        MatchOrdersRFQ,
+        UpdateFeeTier,
         TransferQuote,
         RebalanceXWithdraw,
-        UpdateMinDepositRate,
         AssertCode,
         WithdrawInsurance,
         CreateIsolatedSubaccount,
         DelistProduct,
-        MintVlp,
-        BurnVlp,
-        RebalanceVlp
+        MintNlp,
+        BurnNlp,
+        MatchOrdersWithAmount,
+        UpdateTierFeeRates,
+        AddNlpPool,
+        UpdateNlpPool,
+        DeleteNlpPool
     }
 
     struct UpdateProduct {
@@ -48,20 +44,10 @@ interface IEndpoint {
         bytes tx;
     }
 
-    /// requires signature from sender
     enum LiquidationMode {
         SPREAD,
         SPOT,
         PERP
-    }
-
-    struct LegacyLiquidateSubaccount {
-        bytes32 sender;
-        bytes32 liquidatee;
-        uint8 mode;
-        uint32 healthGroup;
-        int128 amount;
-        uint64 nonce;
     }
 
     struct LiquidateSubaccount {
@@ -71,11 +57,6 @@ interface IEndpoint {
         bool isEncodedSpread;
         int128 amount;
         uint64 nonce;
-    }
-
-    struct LegacySignedLiquidateSubaccount {
-        LegacyLiquidateSubaccount tx;
-        bytes signature;
     }
 
     struct SignedLiquidateSubaccount {
@@ -106,60 +87,45 @@ interface IEndpoint {
         bytes signature;
     }
 
-    struct MintLp {
-        bytes32 sender;
-        uint32 productId;
-        uint128 amountBase;
-        uint128 quoteAmountLow;
-        uint128 quoteAmountHigh;
-        uint64 nonce;
-    }
-
-    struct SignedMintLp {
-        MintLp tx;
-        bytes signature;
-    }
-
-    struct BurnLp {
-        bytes32 sender;
-        uint32 productId;
-        uint128 amount;
-        uint64 nonce;
-    }
-
-    struct SignedBurnLp {
-        BurnLp tx;
-        bytes signature;
-    }
-
-    struct MintVlp {
+    struct MintNlp {
         bytes32 sender;
         uint128 quoteAmount;
         uint64 nonce;
     }
 
-    struct SignedMintVlp {
-        MintVlp tx;
+    struct SignedMintNlp {
+        MintNlp tx;
         bytes signature;
         int128 oraclePriceX18;
+        int128[] nlpPoolRebalanceX18;
     }
 
-    struct BurnVlp {
+    struct BurnNlp {
         bytes32 sender;
-        uint128 vlpAmount;
+        uint128 nlpAmount;
         uint64 nonce;
     }
 
-    struct SignedBurnVlp {
-        BurnVlp tx;
+    struct SignedBurnNlp {
+        BurnNlp tx;
         bytes signature;
         int128 oraclePriceX18;
+        int128[] nlpPoolRebalanceX18;
     }
 
-    struct RebalanceVlp {
-        uint32 productId;
-        int128 baseAmount;
-        int128 quoteAmount;
+    struct AddNlpPool {
+        address owner;
+        uint128 balanceWeightX18;
+    }
+
+    struct UpdateNlpPool {
+        uint64 poolId;
+        address owner;
+        uint128 balanceWeightX18;
+    }
+
+    struct DeleteNlpPool {
+        uint64 poolId;
     }
 
     struct LinkSigner {
@@ -173,20 +139,13 @@ interface IEndpoint {
         bytes signature;
     }
 
-    /// callable by endpoint; no signature verifications needed
     struct PerpTick {
         uint128 time;
         int128[] avgPriceDiffs;
     }
 
-    struct LegacySpotTick {
-        uint128 time;
-    }
-
     struct SpotTick {
         uint128 time;
-        // utilization ratio across all chains
-        int128[] utilizationRatiosX18;
     }
 
     struct ManualAssert {
@@ -216,29 +175,22 @@ interface IEndpoint {
         int128[] amounts;
     }
 
-    struct UpdateFeeRates {
+    struct UpdateFeeTier {
         address user;
-        uint32 productId;
-        // the absolute value of fee rates can't be larger than 100%,
-        // so their X18 values are in the range [-1e18, 1e18], which
-        // can be stored by using int64.
-        int64 makerRateX18;
-        int64 takerRateX18;
+        uint32 newTier;
     }
 
-    struct ClaimSequencerFees {
-        bytes32 subaccount;
+    struct UpdateTierFeeRates {
+        uint32 tier;
+        uint32 productId;
+        int128 makerRateX18;
+        int128 takerRateX18;
     }
 
     struct RebalanceXWithdraw {
         uint32 productId;
         uint128 amount;
         address sendTo;
-    }
-
-    struct UpdateMinDepositRate {
-        uint32 productId;
-        int128 minDepositRateX18;
     }
 
     struct UpdatePrice {
@@ -251,25 +203,18 @@ interface IEndpoint {
         uint256[] productIds;
     }
 
-    /// matching
     struct Order {
         bytes32 sender;
         int128 priceX18;
         int128 amount;
         uint64 expiration;
         uint64 nonce;
+        uint128 appendix;
     }
 
     struct SignedOrder {
         Order order;
         bytes signature;
-    }
-
-    struct LegacyMatchOrders {
-        uint32 productId;
-        bool amm;
-        SignedOrder taker;
-        SignedOrder maker;
     }
 
     struct MatchOrders {
@@ -278,25 +223,16 @@ interface IEndpoint {
         SignedOrder maker;
     }
 
+    struct MatchOrdersWithAmount {
+        MatchOrders matchOrders;
+        int128 takerAmountDelta;
+    }
+
     struct MatchOrdersWithSigner {
         MatchOrders matchOrders;
         address takerLinkedSigner;
         address makerLinkedSigner;
-    }
-
-    // just swap against AMM -- theres no maker order
-    struct MatchOrderAMM {
-        uint32 productId;
-        int128 baseDelta;
-        int128 quoteDelta;
-        SignedOrder taker;
-    }
-
-    struct SwapAMM {
-        bytes32 sender;
-        uint32 productId;
-        int128 amount;
-        int128 priceX18;
+        int128 takerAmountDelta;
     }
 
     struct DepositInsurance {
@@ -315,19 +251,6 @@ interface IEndpoint {
         uint64 txUpTo;
     }
 
-    // legacy :(
-    struct Prices {
-        int128 spotPriceX18;
-        int128 perpPriceX18;
-    }
-
-    struct BurnLpAndTransfer {
-        bytes32 sender;
-        uint32 productId;
-        uint128 amount;
-        bytes32 recipient;
-    }
-
     struct TransferQuote {
         bytes32 sender;
         bytes32 recipient;
@@ -340,19 +263,17 @@ interface IEndpoint {
         bytes signature;
     }
 
-    struct IsolatedOrder {
-        bytes32 sender;
-        int128 priceX18;
-        int128 amount;
-        uint64 expiration;
-        uint64 nonce;
-        int128 margin;
-    }
-
     struct CreateIsolatedSubaccount {
-        IsolatedOrder order;
+        Order order;
         uint32 productId;
         bytes signature;
+    }
+
+    struct NlpPool {
+        uint64 poolId;
+        bytes32 subaccount;
+        address owner;
+        uint128 balanceWeightX18;
     }
 
     function depositCollateral(
@@ -385,5 +306,7 @@ interface IEndpoint {
 
     function getOffchainExchange() external view returns (address);
 
-    function getPriceX18(uint32 productId) external view returns (int128);
+    function getPriceX18(uint32 productId) external returns (int128);
+
+    function getNlpPools() external view returns (NlpPool[] memory);
 }

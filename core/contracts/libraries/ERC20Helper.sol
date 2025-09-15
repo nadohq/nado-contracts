@@ -3,7 +3,6 @@ pragma solidity ^0.8.0;
 
 import "../interfaces/IERC20Base.sol";
 import "../common/Errors.sol";
-import "hardhat/console.sol";
 
 // @dev Adapted from https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TransferHelper.sol
 library ERC20Helper {

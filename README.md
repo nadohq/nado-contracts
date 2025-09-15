@@ -1,13 +1,13 @@
-# Vertex Protocol
+# Nado Protocol
 
-This repository contains the smart contract implementations for the Vertex Protocol ecosystem.
+This repository contains the smart contract implementations for the Nado Protocol ecosystem.
 
 ## Project Structure
 
 The repository is organized into two main projects:
 
-- **[vertex-contracts/core](./core)**: EVM implementation of Vertex core functionality
-- **[vertex-contracts/lba](./lba)**: Vertex LBA (Liquidity Bootstrap Auction) contracts
+- **[nado-contracts/core](./core)**: EVM implementation of Nado core functionality
+- **[nado-contracts/lba](./lba)**: Nado LBA (Liquidity Bootstrap Auction) contracts
 
 ## Requirements
 
@@ -19,13 +19,13 @@ The repository is organized into two main projects:
 Each project has its own setup and development commands. Navigate to the respective directories for project-specific instructions:
 
 ```
-# For Vertex EVM Core Contracts
-cd vertex-contracts/core
+# For Nado EVM Core Contracts
+cd nado-contracts/core
 yarn install
 yarn compile
 
-# For Vertex LBA Contracts
-cd vertex-contracts/lba
+# For Nado LBA Contracts
+cd nado-contracts/lba
 yarn install
 # Follow the .env setup instructions
 ```
@@ -34,7 +34,7 @@ yarn install
 
 ### Core Contracts
 
-- `yarn compile`: Compile Vertex EVM contracts
+- `yarn compile`: Compile Nado EVM contracts
 - See project-specific README for more details
 
 ### LBA Contracts

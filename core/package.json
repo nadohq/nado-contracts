@@ -1,8 +1,8 @@
 {
-  "name": "vertex-core",
+  "name": "nado-core",
   "version": "3.4.0",
   "license": "UNLICENSED",
-  "description": "EVM implementation of Vertex",
+  "description": "EVM implementation of Nado",
   "scripts": {
     "prepare": "husky install",
     "lint": "eslint './**/*.ts' --fix && prettier --write './**/*.{ts,sol}' --loglevel silent && solhint --fix 'contracts/**/*.sol'",

@@ -2,8 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "hardhat/console.sol";
-
 import "./common/Constants.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
@@ -13,25 +11,24 @@ import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/IOffchainExchange.sol";
 import "./interfaces/IEndpoint.sol";
 import "./EndpointGated.sol";
-import "./libraries/Logger.sol";
 
 abstract contract BaseEngine is IProductEngine, EndpointGated {
     using MathSD21x18 for int128;
 
     IClearinghouse internal _clearinghouse;
-    address internal _fees; // deprecated
     uint32[] internal productIds;
 
-    mapping(uint32 => address) internal markets; // deprecated
-
-    // Whether an address can apply deltas - all orderbooks and clearinghouse is whitelisted
     mapping(address => bool) internal canApplyDeltas;
 
-    bytes32 internal constant RISK_STORAGE = keccak256("vertex.protocol.risk");
+    // subaccount -> bitmapIndex -> bitmapChunk
+    mapping(bytes32 => mapping(uint32 => uint256)) internal nonZeroBalances;
+
+    bytes32 internal constant RISK_STORAGE = keccak256("nado.protocol.risk");
 
     event BalanceUpdate(uint32 productId, bytes32 subaccount);
     event ProductUpdate(uint32 productId);
 
+    // solhint-disable-next-line no-empty-blocks
     function _productUpdate(uint32 productId) internal virtual {}
 
     struct Uint256Slot {
@@ -44,17 +41,17 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
 
     function _risk() internal pure returns (RiskStoreMappingSlot storage r) {
         bytes32 slot = RISK_STORAGE;
+        // solhint-disable-next-line no-inline-assembly
         assembly {
             r.slot := slot
         }
     }
 
-    function _risk(uint32 productId, RiskStoreMappingSlot storage rmap)
+    function _risk(uint32 productId)
         internal
-        view
         returns (RiskHelper.Risk memory r)
     {
-        RiskHelper.RiskStore memory s = rmap.value[productId];
+        RiskHelper.RiskStore memory s = _risk().value[productId];
         r.longWeightInitialX18 = int128(s.longWeightInitial) * 1e9;
         r.shortWeightInitialX18 = int128(s.shortWeightInitial) * 1e9;
         r.longWeightMaintenanceX18 = int128(s.longWeightMaintenance) * 1e9;
@@ -62,32 +59,12 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         r.priceX18 = s.priceX18;
     }
 
-    function _risk(uint32 productId)
-        internal
-        view
-        returns (RiskHelper.Risk memory)
-    {
-        return _risk(productId, _risk());
-    }
-
     function getRisk(uint32 productId)
         external
-        view
         returns (RiskHelper.Risk memory)
     {
         return _risk(productId);
     }
-
-    function _getInLpBalance(uint32 productId, bytes32 subaccount)
-        internal
-        view
-        virtual
-        returns (
-            // baseAmount, quoteAmount, quoteDeltaAmount (funding)
-            int128,
-            int128,
-            int128
-        );
 
     function _getBalance(uint32 productId, bytes32 subaccount)
         internal
@@ -95,59 +72,107 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         virtual
         returns (int128, int128);
 
+    function _getMaxProductId() internal view returns (uint32) {
+        return productIds[productIds.length - 1];
+    }
+
+    function _getBitmapChunk(bytes32 subaccount, uint32 bitmapIndex)
+        internal
+        view
+        virtual
+        returns (uint256)
+    {
+        return nonZeroBalances[subaccount][bitmapIndex];
+    }
+
+    function _setProductBit(
+        bytes32 subaccount,
+        uint32 productId,
+        bool hasBalance
+    ) internal {
+        if (hasBalance) {
+            nonZeroBalances[subaccount][productId / 256] |= (1 <<
+                (productId % 256));
+        } else {
+            nonZeroBalances[subaccount][productId / 256] &= ~(1 <<
+                (productId % 256));
+        }
+    }
+
+    function _hasProductBit(bytes32 subaccount, uint32 productId)
+        internal
+        view
+        returns (bool)
+    {
+        return
+            (nonZeroBalances[subaccount][productId / 256] &
+                (1 << (productId % 256))) != 0;
+    }
+
     function getHealthContribution(
         bytes32 subaccount,
         IProductEngine.HealthType healthType
-    ) public view returns (int128 health) {
-        uint32[] memory _productIds = getProductIds();
-        RiskStoreMappingSlot storage r = _risk();
+    ) public returns (int128 health) {
+        uint32 maxBitmapIndex = _getMaxProductId() / 256;
 
-        for (uint32 i = 0; i < _productIds.length; i++) {
-            uint32 productId = _productIds[i];
-            RiskHelper.Risk memory risk = _risk(productId, r);
-            {
-                (int128 amount, int128 quoteAmount) = _getBalance(
+        for (
+            uint32 bitmapIndex = 0;
+            bitmapIndex <= maxBitmapIndex;
+            bitmapIndex++
+        ) {
+            uint256 bitmapChunk = _getBitmapChunk(subaccount, bitmapIndex);
+            if (bitmapChunk == 0) {
+                continue;
+            }
+
+            health += _processBitmapChunk(
+                bitmapChunk,
+                bitmapIndex,
+                subaccount,
+                healthType
+            );
+        }
+    }
+
+    function _processBitmapChunk(
+        uint256 bitmapChunk,
+        uint32 bitmapIndex,
+        bytes32 subaccount,
+        IProductEngine.HealthType healthType
+    ) internal returns (int128 health) {
+        uint32 productId = bitmapIndex * 256;
+        while (bitmapChunk != 0) {
+            if (bitmapChunk & 1 != 0) {
+                health += _calculateProductHealth(
                     productId,
-                    subaccount
-                );
-                int128 weight = RiskHelper._getWeightX18(
-                    risk,
-                    amount,
+                    subaccount,
                     healthType
                 );
-                health += quoteAmount;
-                if (amount != 0) {
-                    // anything with a short weight of 2 is a spot that
-                    // should not count towards health and exists out of the risk system
-                    // if we're getting a weight of 2 it means this is attempting to short
-                    // the spot, so we should error out
-                    if (weight == 2 * ONE) {
-                        return type(int128).min;
-                    }
-
-                    health += amount.mul(weight).mul(risk.priceX18);
-                }
             }
+            bitmapChunk >>= 1;
+            productId++;
+        }
+    }
 
-            {
-                (
-                    int128 baseAmount,
-                    int128 quoteAmount,
-                    int128 quoteDeltaAmount
-                ) = _getInLpBalance(productId, subaccount);
-                if (baseAmount != 0) {
-                    int128 lpValue = RiskHelper._getLpRawValue(
-                        baseAmount,
-                        quoteAmount,
-                        risk.priceX18
-                    );
-                    health +=
-                        lpValue.mul(
-                            RiskHelper._getWeightX18(risk, 1, healthType)
-                        ) +
-                        quoteDeltaAmount;
-                }
+    function _calculateProductHealth(
+        uint32 productId,
+        bytes32 subaccount,
+        IProductEngine.HealthType healthType
+    ) internal returns (int128 health) {
+        RiskHelper.Risk memory risk = _risk(productId);
+        (int128 amount, int128 quoteAmount) = _getBalance(
+            productId,
+            subaccount
+        );
+        int128 weight = RiskHelper._getWeightX18(risk, amount, healthType);
+        health += quoteAmount;
+
+        if (amount != 0) {
+            if (weight == 2 * ONE) {
+                return type(int128).min;
             }
+            health += amount.mul(weight).mul(risk.priceX18);
+            emit PriceQuery(productId);
         }
     }
 
@@ -155,7 +180,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         bytes32 subaccount,
         uint32 productId,
         IProductEngine.HealthType healthType
-    ) external view returns (IProductEngine.CoreRisk memory) {
+    ) external returns (IProductEngine.CoreRisk memory) {
         RiskHelper.Risk memory risk = _risk(productId);
         (int128 amount, ) = _getBalance(productId, subaccount);
         return
@@ -169,7 +194,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     function _balanceUpdate(uint32 productId, bytes32 subaccount)
         internal
         virtual
-    {}
+    {} // solhint-disable-line no-empty-blocks
 
     function _assertInternal() internal view virtual {
         require(canApplyDeltas[msg.sender], ERR_UNAUTHORIZED);
@@ -203,13 +228,10 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     function _addProductForId(
         uint32 productId,
         uint32 quoteId,
-        address virtualBook,
         int128 sizeIncrement,
         int128 minSize,
-        int128 lpSpreadX18,
         RiskHelper.RiskStore memory riskStore
     ) internal {
-        require(virtualBook != address(0));
         require(
             riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
                 riskStore.longWeightMaintenance <= 10**9 &&
@@ -236,14 +258,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
             }
         }
 
-        _exchange().updateMarket(
-            productId,
-            quoteId,
-            virtualBook,
-            sizeIncrement,
-            minSize,
-            lpSpreadX18
-        );
+        _exchange().updateMarket(productId, quoteId, sizeIncrement, minSize);
 
         emit AddProduct(productId);
     }
@@ -253,7 +268,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
             IOffchainExchange(IEndpoint(getEndpoint()).getOffchainExchange());
     }
 
-    function updatePrice(uint32 productId, int128 priceX18) external {
+    function updatePrice(uint32 productId, int128 priceX18) external virtual {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
         _risk().value[productId].priceX18 = priceX18;
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-// Trying to take an action on vertex when
+// Trying to take an action on nado when
 string constant ERR_REQUIRES_DEPOSIT = "RS";
 
 // ERC20 Transfer failed
@@ -130,3 +130,9 @@ string constant ERR_DEPOSIT_TOO_SMALL = "DTS";
 string constant ERR_CODE_NOT_MATCH = "CNM";
 
 string constant ERR_INVALID_HOLDER_LIST = "IHL";
+
+string constant ERR_INVALID_NLP_POOL = "INP";
+
+string constant ERR_INVALID_NLP_REBALANCE = "INR";
+
+string constant ERR_UNLOCKED_NLP_INSUFFICIENT = "UNI";

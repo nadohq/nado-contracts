@@ -26,6 +26,8 @@ interface ISpotEngine is IProductEngine {
         int128 interestFloorX18;
         int128 interestSmallCapX18;
         int128 interestLargeCapX18;
+        int128 withdrawFeeX18;
+        int128 minDepositRateX18;
     }
 
     struct State {
@@ -37,35 +39,30 @@ interface ISpotEngine is IProductEngine {
 
     struct Balance {
         int128 amount;
-        int128 lastCumulativeMultiplierX18;
     }
 
     struct BalanceNormalized {
         int128 amountNormalized;
     }
 
-    struct LpState {
-        int128 supply;
-        Balance quote;
-        Balance base;
-    }
-
-    struct LpBalance {
-        int128 amount;
-    }
-
-    struct Balances {
-        BalanceNormalized balance;
-        LpBalance lpBalance;
-    }
-
     struct UpdateProductTx {
         uint32 productId;
         int128 sizeIncrement;
         int128 minSize;
-        int128 lpSpreadX18;
         Config config;
         RiskHelper.RiskStore riskStore;
+    }
+
+    struct NlpLockedBalance {
+        Balance balance;
+        uint128 unlockedAt;
+    }
+
+    struct NlpLockedBalanceQueue {
+        mapping(uint64 => NlpLockedBalance) balances;
+        uint64 balanceCount;
+        uint64 unlockedUpTo;
+        Balance unlockedBalanceSum;
     }
 
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
@@ -77,16 +74,6 @@ interface ISpotEngine is IProductEngine {
         external
         view
         returns (Balance memory);
-
-    function getStatesAndBalances(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (
-            LpState memory,
-            LpBalance memory,
-            State memory,
-            Balance memory
-        );
 
     function getConfig(uint32 productId) external view returns (Config memory);
 
@@ -111,9 +98,6 @@ interface ISpotEngine is IProductEngine {
 
     function updateStates(uint128 dt) external;
 
-    function updateMinDepositRate(uint32 productId, int128 minDepositRateX18)
-        external;
-
     function manualAssert(
         int128[] calldata totalDeposits,
         int128[] calldata totalBorrows
@@ -122,4 +106,8 @@ interface ISpotEngine is IProductEngine {
     function socializeSubaccount(bytes32 subaccount) external;
 
     function assertUtilization(uint32 productId) external view;
+
+    function getNlpUnlockedBalance(bytes32 subaccount)
+        external
+        returns (Balance memory);
 }

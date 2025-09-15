@@ -6,7 +6,6 @@ import "./interfaces/IEndpoint.sol";
 import "./interfaces/IEndpointGated.sol";
 import "./libraries/MathSD21x18.sol";
 import "./common/Constants.sol";
-import "hardhat/console.sol";
 
 abstract contract EndpointGated is OwnableUpgradeable, IEndpointGated {
     address private endpoint;

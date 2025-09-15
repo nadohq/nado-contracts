@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import "./interfaces/IArbAirdrop.sol";
+import "./interfaces/IAirdrop.sol";
 import "./Endpoint.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract ArbAirdrop is OwnableUpgradeable, IArbAirdrop {
-    address token;
-    address sanctions;
-    uint32 pastWeeks;
+contract Airdrop is OwnableUpgradeable, IAirdrop {
+    address internal token;
+    address internal sanctions;
+    uint32 internal pastWeeks;
 
-    mapping(uint32 => bytes32) merkleRoots;
-    mapping(uint32 => mapping(address => uint256)) claimed;
+    mapping(uint32 => bytes32) internal merkleRoots;
+    mapping(uint32 => mapping(address => uint256)) internal claimed;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -69,7 +69,7 @@ contract ArbAirdrop is OwnableUpgradeable, IArbAirdrop {
     ) internal {
         _verifyProof(week, msg.sender, totalAmount, proof);
         SafeERC20.safeTransfer(IERC20(token), msg.sender, totalAmount);
-        emit ClaimArb(msg.sender, week, totalAmount);
+        emit Claim(msg.sender, week, totalAmount);
     }
 
     function claim(ClaimProof[] calldata claimProofs) external {

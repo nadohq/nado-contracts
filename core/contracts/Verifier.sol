@@ -21,14 +21,10 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         "TransferQuote(bytes32 sender,bytes32 recipient,uint128 amount,uint64 nonce)";
     string internal constant WITHDRAW_COLLATERAL_SIGNATURE =
         "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
-    string internal constant MINT_LP_SIGNATURE =
-        "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)";
-    string internal constant BURN_LP_SIGNATURE =
-        "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
-    string internal constant MINT_VLP_SIGNATURE =
-        "MintVlp(bytes32 sender,uint128 quoteAmount,uint64 nonce)";
-    string internal constant BURN_VLP_SIGNATURE =
-        "BurnVlp(bytes32 sender,uint128 vlpAmount,uint64 nonce)";
+    string internal constant MINT_NLP_SIGNATURE =
+        "MintNlp(bytes32 sender,uint128 quoteAmount,uint64 nonce)";
+    string internal constant BURN_NLP_SIGNATURE =
+        "BurnNlp(bytes32 sender,uint128 nlpAmount,uint64 nonce)";
     string internal constant LINK_SIGNER_SIGNATURE =
         "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
@@ -179,9 +175,9 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         // the ecrecover precompile implementation checks that the `r` and `s`
         // inputs are non-zero (in this case, `px` and `ep`), thus we don't need to
         // check if they're zero.
-        address R = ecrecover(sp, parity, px, ep);
-        require(R != address(0), "ecrecover failed");
-        return e == keccak256(abi.encodePacked(R, uint8(parity), px, message));
+        address r = ecrecover(sp, parity, px, ep);
+        require(r != address(0), "ecrecover failed");
+        return e == keccak256(abi.encodePacked(r, uint8(parity), px, message));
     }
 
     uint256 public constant _P =
@@ -252,11 +248,15 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         return expectedAddress == recovered;
     }
 
+    // Type casting wraps around: uint8(256) returns 0
+    // Arithmetic operations revert: 255 + 1 reverts with panic code 0x11
+    // Since we use uint8 for signer index, we need to check signer index is not too large
     function requireValidTxSignatures(
         bytes calldata txn,
         uint64 idx,
         bytes[] calldata signatures
     ) public view {
+        require(signatures.length <= 256, "too many signatures");
         bytes32 data = keccak256(
             abi.encodePacked(uint256(block.chainid), uint256(idx), txn)
         );
@@ -332,59 +332,29 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
                     signedTx.tx.nonce
                 )
             );
-        } else if (txType == IEndpoint.TransactionType.MintLp) {
-            IEndpoint.SignedMintLp memory signedTx = abi.decode(
+        } else if (txType == IEndpoint.TransactionType.MintNlp) {
+            IEndpoint.SignedMintNlp memory signedTx = abi.decode(
                 transactionBody,
-                (IEndpoint.SignedMintLp)
+                (IEndpoint.SignedMintNlp)
             );
             digest = keccak256(
                 abi.encode(
-                    keccak256(bytes(MINT_LP_SIGNATURE)),
-                    signedTx.tx.sender,
-                    signedTx.tx.productId,
-                    signedTx.tx.amountBase,
-                    signedTx.tx.quoteAmountLow,
-                    signedTx.tx.quoteAmountHigh,
-                    signedTx.tx.nonce
-                )
-            );
-        } else if (txType == IEndpoint.TransactionType.BurnLp) {
-            IEndpoint.SignedBurnLp memory signedTx = abi.decode(
-                transactionBody,
-                (IEndpoint.SignedBurnLp)
-            );
-            digest = keccak256(
-                abi.encode(
-                    keccak256(bytes(BURN_LP_SIGNATURE)),
-                    signedTx.tx.sender,
-                    signedTx.tx.productId,
-                    signedTx.tx.amount,
-                    signedTx.tx.nonce
-                )
-            );
-        } else if (txType == IEndpoint.TransactionType.MintVlp) {
-            IEndpoint.SignedMintVlp memory signedTx = abi.decode(
-                transactionBody,
-                (IEndpoint.SignedMintVlp)
-            );
-            digest = keccak256(
-                abi.encode(
-                    keccak256(bytes(MINT_VLP_SIGNATURE)),
+                    keccak256(bytes(MINT_NLP_SIGNATURE)),
                     signedTx.tx.sender,
                     signedTx.tx.quoteAmount,
                     signedTx.tx.nonce
                 )
             );
-        } else if (txType == IEndpoint.TransactionType.BurnVlp) {
-            IEndpoint.SignedBurnVlp memory signedTx = abi.decode(
+        } else if (txType == IEndpoint.TransactionType.BurnNlp) {
+            IEndpoint.SignedBurnNlp memory signedTx = abi.decode(
                 transactionBody,
-                (IEndpoint.SignedBurnVlp)
+                (IEndpoint.SignedBurnNlp)
             );
             digest = keccak256(
                 abi.encode(
-                    keccak256(bytes(BURN_VLP_SIGNATURE)),
+                    keccak256(bytes(BURN_NLP_SIGNATURE)),
                     signedTx.tx.sender,
-                    signedTx.tx.vlpAmount,
+                    signedTx.tx.nlpAmount,
                     signedTx.tx.nonce
                 )
             );

@@ -25,27 +25,10 @@ interface IPerpEngine is IProductEngine {
         int128 lastCumulativeFundingX18;
     }
 
-    struct LpState {
-        int128 supply;
-        // TODO: this should be removed; we can just get it from State.cumulativeFundingLongX18
-        int128 lastCumulativeFundingX18;
-        int128 cumulativeFundingPerLpX18;
-        int128 base;
-        int128 quote;
-    }
-
-    struct LpBalance {
-        int128 amount;
-        // NOTE: funding payments should be rolled
-        // into Balance.vQuoteBalance;
-        int128 lastCumulativeFundingX18;
-    }
-
     struct UpdateProductTx {
         uint32 productId;
         int128 sizeIncrement;
         int128 minSize;
-        int128 lpSpreadX18;
         RiskHelper.RiskStore riskStore;
     }
 
@@ -59,28 +42,14 @@ interface IPerpEngine is IProductEngine {
         view
         returns (Balance memory);
 
-    function getStatesAndBalances(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (
-            LpState memory,
-            LpBalance memory,
-            State memory,
-            Balance memory
-        );
-
-    /// @dev Returns amount settled and emits SettlePnl events for each product
     function settlePnl(bytes32 subaccount, uint256 productIds)
         external
         returns (int128);
 
     function getSettlementState(uint32 productId, bytes32 subaccount)
         external
-        view
         returns (
             int128 availableSettle,
-            LpState memory lpState,
-            LpBalance memory lpBalance,
             State memory state,
             Balance memory balance
         );
@@ -98,7 +67,6 @@ interface IPerpEngine is IProductEngine {
 
     function getPositionPnl(uint32 productId, bytes32 subaccount)
         external
-        view
         returns (int128);
 
     function socializeSubaccount(bytes32 subaccount, int128 insurance)

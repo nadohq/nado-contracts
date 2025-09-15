@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-interface IArbAirdrop {
-    event ClaimArb(address indexed account, uint32 week, uint256 amount);
+interface IAirdrop {
+    event Claim(address indexed account, uint32 week, uint256 amount);
 
     struct ClaimProof {
         uint32 week;
