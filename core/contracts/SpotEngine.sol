@@ -46,7 +46,7 @@ contract SpotEngine is SpotEngineState {
             })
         );
         productIds.push(QUOTE_PRODUCT_ID);
-        emit AddProduct(QUOTE_PRODUCT_ID);
+        emit AddOrUpdateProduct(QUOTE_PRODUCT_ID);
     }
 
     /**
@@ -65,8 +65,7 @@ contract SpotEngine is SpotEngineState {
      * Actions
      */
 
-    /// @notice adds a new product with default parameters
-    function addProduct(
+    function addOrUpdateProduct(
         uint32 productId,
         uint32 quoteId,
         int128 sizeIncrement,
@@ -74,51 +73,27 @@ contract SpotEngine is SpotEngineState {
         Config calldata config,
         RiskHelper.RiskStore calldata riskStore
     ) public onlyOwner {
-        require(productId != QUOTE_PRODUCT_ID);
-        _addProductForId(productId, quoteId, sizeIncrement, minSize, riskStore);
-
-        configs[productId] = config;
-        _setState(
+        bool isNewProduct = _addOrUpdateProduct(
             productId,
-            State({
-                cumulativeDepositsMultiplierX18: ONE,
-                cumulativeBorrowsMultiplierX18: ONE,
-                totalDepositsNormalized: 0,
-                totalBorrowsNormalized: 0
-            })
+            quoteId,
+            sizeIncrement,
+            minSize,
+            riskStore
         );
-    }
+        configs[productId] = config;
 
-    function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
-        UpdateProductTx memory txn = abi.decode(rawTxn, (UpdateProductTx));
-        RiskHelper.RiskStore memory riskStore = txn.riskStore;
-
-        if (txn.productId != QUOTE_PRODUCT_ID) {
-            require(
-                riskStore.longWeightInitial <=
-                    riskStore.longWeightMaintenance &&
-                    riskStore.shortWeightInitial >=
-                    riskStore.shortWeightMaintenance &&
-                    configs[txn.productId].token == txn.config.token,
-                ERR_BAD_PRODUCT_CONFIG
-            );
-
-            RiskHelper.RiskStore memory r = _risk().value[txn.productId];
-            r.longWeightInitial = riskStore.longWeightInitial;
-            r.shortWeightInitial = riskStore.shortWeightInitial;
-            r.longWeightMaintenance = riskStore.longWeightMaintenance;
-            r.shortWeightMaintenance = riskStore.shortWeightMaintenance;
-            _risk().value[txn.productId] = r;
-
-            _exchange().updateMarket(
-                txn.productId,
-                type(uint32).max,
-                txn.sizeIncrement,
-                txn.minSize
+        if (isNewProduct) {
+            require(productId != QUOTE_PRODUCT_ID);
+            _setState(
+                productId,
+                State({
+                    cumulativeDepositsMultiplierX18: ONE,
+                    cumulativeBorrowsMultiplierX18: ONE,
+                    totalDepositsNormalized: 0,
+                    totalBorrowsNormalized: 0
+                })
             );
         }
-
-        configs[txn.productId] = txn.config;
     }
 
     function updateQuoteFromInsurance(bytes32 subaccount, int128 insurance)

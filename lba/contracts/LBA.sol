@@ -34,7 +34,7 @@ contract LBA is ILBA, OwnableUpgradeable {
     address vrtxToken;
     address usdcToken;
     address airdrop;
-    address nadoEndpoint;
+    address vertexEndpoint;
     address sanctions;
 
     uint32 vrtxProductId;
@@ -44,7 +44,7 @@ contract LBA is ILBA, OwnableUpgradeable {
 
     uint256 vrtxMultiplier;
     uint256 usdcMultiplier;
-    bool depositedToNado;
+    bool depositedToVertex;
 
     mapping(address => bool) withdrawnUsdc;
     mapping(address => uint256) vrtxDeposited;
@@ -63,7 +63,7 @@ contract LBA is ILBA, OwnableUpgradeable {
         address _vrtxToken,
         address _usdcToken,
         address _airdrop,
-        address _nadoEndpoint,
+        address _vertexEndpoint,
         address _sanctions,
         uint64 _depositStartTime,
         uint64 _depositEndTime,
@@ -76,7 +76,7 @@ contract LBA is ILBA, OwnableUpgradeable {
         vrtxToken = _vrtxToken;
         usdcToken = _usdcToken;
         airdrop = _airdrop;
-        nadoEndpoint = _nadoEndpoint;
+        vertexEndpoint = _vertexEndpoint;
         sanctions = _sanctions;
 
         vrtxProductId = _vrtxProductId;
@@ -107,10 +107,10 @@ contract LBA is ILBA, OwnableUpgradeable {
         } else if (currentTime < config.withdrawEndTime) {
             stage = Stage.WithdrawingUsdc;
         } else if (currentTime < config.lpVestStartTime) {
-            if (!depositedToNado) {
+            if (!depositedToVertex) {
                 stage = Stage.LBAFinished;
             } else if (state.totalLpMinted == 0) {
-                stage = Stage.DepositedToNado;
+                stage = Stage.DepositedToVertex;
             } else {
                 stage = Stage.LpMinted;
             }
@@ -224,46 +224,46 @@ contract LBA is ILBA, OwnableUpgradeable {
         }
     }
 
-    function depositToNado() external onlyOwner {
+    function depositToVertex() external onlyOwner {
         require(getStage() == Stage.LBAFinished, "Not in LBAFinished stage.");
-        depositedToNado = true;
+        depositedToVertex = true;
 
-        // deposit all VRTX into nado.
+        // deposit all VRTX into vertex.
         SafeERC20.safeApprove(
             IERC20(vrtxToken),
-            nadoEndpoint,
+            vertexEndpoint,
             uint128(state.totalVrtxDeposited)
         );
-        IEndpoint(nadoEndpoint).depositCollateral(
+        IEndpoint(vertexEndpoint).depositCollateral(
             DEFAULT_SUBACCOUNT,
             vrtxProductId,
             uint128(state.totalVrtxDeposited)
         );
 
-        // deposit all USDC into nado.
+        // deposit all USDC into vertex.
         SafeERC20.safeApprove(
             IERC20(usdcToken),
-            nadoEndpoint,
+            vertexEndpoint,
             state.totalUsdcDeposited
         );
-        IEndpoint(nadoEndpoint).depositCollateral(
+        IEndpoint(vertexEndpoint).depositCollateral(
             DEFAULT_SUBACCOUNT,
             QUOTE_PRODUCT_ID,
             uint128(state.totalUsdcDeposited)
         );
     }
 
-    function mintLpInNado() external onlyOwner {
+    function mintLpInVertex() external onlyOwner {
         require(
-            getStage() == Stage.DepositedToNado,
-            "Not in DepositedToNado stage."
+            getStage() == Stage.DepositedToVertex,
+            "Not in DepositedToVertex stage."
         );
 
         uint256 vrtxInitialPriceX18 = getVrtxInitialPriceX18();
         require(
-            IEndpoint(nadoEndpoint).getPriceX18(vrtxProductId) ==
+            IEndpoint(vertexEndpoint).getPriceX18(vrtxProductId) ==
                 int128(int256(vrtxInitialPriceX18)),
-            "VRTX price on nado doesn't match with initial price."
+            "VRTX price on vertex doesn't match with initial price."
         );
 
         uint256 amountBase = state.totalVrtxDeposited * vrtxMultiplier;
@@ -280,11 +280,11 @@ contract LBA is ILBA, OwnableUpgradeable {
 
         SafeERC20.safeApprove(
             IERC20(usdcToken),
-            nadoEndpoint,
+            vertexEndpoint,
             SLOW_MODE_FEE / usdcMultiplier
         );
 
-        IEndpoint(nadoEndpoint).submitSlowModeTransaction(
+        IEndpoint(vertexEndpoint).submitSlowModeTransaction(
             abi.encodePacked(
                 uint8(IEndpoint.TransactionType.MintLp),
                 abi.encode(
@@ -339,7 +339,7 @@ contract LBA is ILBA, OwnableUpgradeable {
             uint64 totalInDay = total / SECONDS_PER_DAY;
 
             // LPs are unlocked by day instead of seconds, because unlocking LP
-            // requires submitting slow mode tx to nado, which isn't charged for
+            // requires submitting slow mode tx to vertex, which isn't charged for
             // SLOW_MODE_FEE for UX consideration. we want to reduce the amount of
             // LP unlocking transactions to save gas.
             lockedLpBalance =
@@ -369,7 +369,7 @@ contract LBA is ILBA, OwnableUpgradeable {
         lpWithdrawn[sender] += lpAmount;
         state.totalLpWithdrawn += lpAmount;
 
-        IEndpoint(nadoEndpoint).submitSlowModeTransaction(
+        IEndpoint(vertexEndpoint).submitSlowModeTransaction(
             abi.encodePacked(
                 uint8(IEndpoint.TransactionType.BurnLpAndTransfer),
                 abi.encode(

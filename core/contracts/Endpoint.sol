@@ -72,8 +72,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         address _sequencer,
         address _offchainExchange,
         IClearinghouse _clearinghouse,
-        address _verifier,
-        int128[] memory initialPrices
+        address _verifier
     ) external initializer {
         __Ownable_init();
         __EIP712_init("Nado", "0.0.1");
@@ -89,9 +88,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
         );
         slowModeConfig = SlowModeConfig({timeout: 0, txCount: 0, txUpTo: 0});
-        for (uint32 i = 0; i < initialPrices.length; i++) {
-            priceX18[i] = initialPrices[i];
-        }
+        priceX18[QUOTE_PRODUCT_ID] = ONE;
 
         if (nlpPools.length == 0) {
             nlpPools.push(
@@ -326,7 +323,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     }
 
     function addNlpPool(address owner, uint128 balanceWeightX18) private {
-        require(owner != address(0), "should have a owner.");
         uint64 poolId = uint64(nlpPools.length);
 
         bytes32 subaccount = NLP_POOL_ACCOUNT_START;
@@ -398,7 +394,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
             handleDepositTransfer(_getQuote(), sender, uint256(txn.amount));
         } else if (
-            txType == TransactionType.UpdateProduct ||
             txType == TransactionType.WithdrawInsurance ||
             txType == TransactionType.DelistProduct ||
             txType == TransactionType.DumpFees ||
@@ -510,12 +505,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
         } else if (txType == TransactionType.DepositInsurance) {
             clearinghouse.depositInsurance(transaction);
-        } else if (txType == TransactionType.UpdateProduct) {
-            UpdateProduct memory txn = abi.decode(
-                transaction[1:],
-                (UpdateProduct)
-            );
-            IProductEngine(txn.engine).updateProduct(txn.tx);
         } else if (txType == TransactionType.LinkSigner) {
             LinkSigner memory txn = abi.decode(transaction[1:], (LinkSigner));
             validateSender(txn.sender, sender);
@@ -737,6 +726,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             clearinghouse.transferQuote(signedTx.tx);
         } else if (txType == TransactionType.AssertCode) {
             clearinghouse.assertCode(transaction);
+        } else if (txType == TransactionType.AssertProduct) {
+            IOffchainExchange(offchainExchange).assertProduct(transaction);
         } else if (txType == TransactionType.CreateIsolatedSubaccount) {
             CreateIsolatedSubaccount memory txn = abi.decode(
                 transaction[1:],
@@ -748,6 +739,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                     getLinkedSigner(txn.order.sender)
                 );
             _recordSubaccount(newIsolatedSubaccount);
+        } else if (txType == TransactionType.CloseIsolatedSubaccount) {
+            CloseIsolatedSubaccount memory txn = abi.decode(
+                transaction[1:],
+                (CloseIsolatedSubaccount)
+            );
+            IOffchainExchange(offchainExchange).tryCloseIsolatedSubaccount(
+                txn.subaccount
+            );
         } else {
             revert();
         }
@@ -793,6 +792,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             }
         }
         verifier.revertGasInfo(transactions.length, gasUsed - gasleft());
+    }
+
+    function setInitialPrice(uint32 productId, int128 initialPriceX18)
+        external
+    {
+        require(
+            msg.sender == address(spotEngine) ||
+                msg.sender == address(perpEngine),
+            ERR_UNAUTHORIZED
+        );
+        require(priceX18[productId] == 0, ERR_UNAUTHORIZED);
+        priceX18[productId] = initialPriceX18;
     }
 
     function getSubaccountId(bytes32 subaccount)

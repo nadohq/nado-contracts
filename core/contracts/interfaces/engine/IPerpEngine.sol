@@ -25,13 +25,6 @@ interface IPerpEngine is IProductEngine {
         int128 lastCumulativeFundingX18;
     }
 
-    struct UpdateProductTx {
-        uint32 productId;
-        int128 sizeIncrement;
-        int128 minSize;
-        RiskHelper.RiskStore riskStore;
-    }
-
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
         external
         view

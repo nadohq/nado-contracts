@@ -21,7 +21,7 @@ interface IEndpoint {
         DumpFees,
         PerpTick,
         ManualAssert,
-        UpdateProduct,
+        UpdateProduct, // deprecated
         LinkSigner,
         UpdateFeeTier,
         TransferQuote,
@@ -36,12 +36,9 @@ interface IEndpoint {
         UpdateTierFeeRates,
         AddNlpPool,
         UpdateNlpPool,
-        DeleteNlpPool
-    }
-
-    struct UpdateProduct {
-        address engine;
-        bytes tx;
+        DeleteNlpPool,
+        AssertProduct,
+        CloseIsolatedSubaccount
     }
 
     enum LiquidationMode {
@@ -157,6 +154,16 @@ interface IEndpoint {
     struct AssertCode {
         string[] contractNames;
         bytes32[] codeHashes;
+        uint256 spreads;
+    }
+
+    struct AssertProduct {
+        uint32 productId;
+        bool isSpot;
+        uint32 quoteId;
+        int128 sizeIncrement;
+        int128 minSize;
+        bytes32 othersHash; // Hash of all other fields (config + risk)
     }
 
     struct WithdrawInsurance {
@@ -269,6 +276,10 @@ interface IEndpoint {
         bytes signature;
     }
 
+    struct CloseIsolatedSubaccount {
+        bytes32 subaccount;
+    }
+
     struct NlpPool {
         uint64 poolId;
         bytes32 subaccount;
@@ -297,6 +308,8 @@ interface IEndpoint {
     ) external;
 
     function submitSlowModeTransaction(bytes calldata transaction) external;
+
+    function setInitialPrice(uint32 productId, int128 initialPriceX18) external;
 
     function getTime() external view returns (uint128);
 

@@ -30,6 +30,13 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
     mapping(address => State) states;
     mapping(address => address) tradingWallet;
 
+    struct QueueIndex {
+        uint64 count;
+        uint64 upTo;
+    }
+    QueueIndex pendingStakingRewardsIndex;
+    mapping(uint64 => PendingStakingReward) pendingStakingRewards;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -77,6 +84,7 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
 
     // stake as `staker`, but VRTX is transferred from `msg.sender`.
     function stakeAs(address staker, uint128 amount) public {
+        _applyPendingStakingRewards();
         require(amount > 0, "Trying to stake 0 tokens.");
         require(
             !ISanctionsList(sanctions).isSanctioned(staker),
@@ -129,6 +137,7 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
         uint128 amount,
         uint128 bonus
     ) external onlyV1 {
+        _applyPendingStakingRewards();
         require(amount > 0, "Trying to migrate 0 tokens.");
         require(
             40 * bonus <= amount * 3,
@@ -152,7 +161,10 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
     function _getVrtxBalance(address account) internal view returns (uint128) {
         if (totalLiquid == 0) return 0;
         return
-            uint128((uint256(liquidShares[account]) * totalVrtx) / totalLiquid);
+            uint128(
+                (uint256(liquidShares[account]) * getTotalVrtxBalance()) /
+                    totalLiquid
+            );
     }
 
     function _withdraw(address account) internal returns (uint128 amount) {
@@ -163,8 +175,6 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
             "address is sanctioned."
         );
         uint64 currentTime = uint64(block.timestamp);
-        uint64 withdrawableTime = _getWithdrawableTime(account);
-        require(currentTime >= withdrawableTime, "not yet time to withdraw");
 
         uint128 liquid = liquidShares[account];
         totalVrtx -= amount;
@@ -178,33 +188,10 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
     }
 
     function withdraw() external {
+        _applyPendingStakingRewards();
         address sender = msg.sender;
         uint128 amount = _withdraw(sender);
-
-        Config memory config = _getConfig(sender);
-        uint128 toDistributeAmount = uint128(
-            (uint256(amount) * config.toDistributeRatio) / ONE
-        );
-        uint128 toTreasuryAmount = uint128(
-            (uint256(amount) * config.toTreasuryRatio) / ONE
-        );
-        uint128 burnAmount = toDistributeAmount + toTreasuryAmount;
-        require(burnAmount < amount, "No VRTX after burning");
-        uint128 withdrawAmount = amount - burnAmount;
-
-        if (totalLiquid > ONE) {
-            totalVrtx += toDistributeAmount;
-        } else {
-            toTreasuryAmount += toDistributeAmount;
-        }
-        states[sender].cumulativeBurnedAmount += burnAmount;
-        if (toTreasuryAmount > 0) {
-            SafeERC20.safeTransfer(
-                IERC20(vrtxToken),
-                owner(),
-                uint256(toTreasuryAmount)
-            );
-        }
+        uint128 withdrawAmount = amount;
 
         SafeERC20.safeTransfer(
             IERC20(vrtxToken),
@@ -214,6 +201,7 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
     }
 
     function withdrawSlow() external {
+        _applyPendingStakingRewards();
         address sender = msg.sender;
         uint128 amount = _withdraw(sender);
 
@@ -230,6 +218,7 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
     }
 
     function claimWithdraw() external {
+        _applyPendingStakingRewards();
         address sender = msg.sender;
         require(
             !ISanctionsList(sanctions).isSanctioned(sender),
@@ -237,21 +226,18 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
         );
         ReleaseSchedule memory schedule = releaseSchedules[sender];
         require(schedule.amount > 0, "No Withdraw scheduled.");
-        uint64 currentTime = uint64(block.timestamp);
-        require(
-            currentTime >= schedule.releaseTime,
-            "Scheduled Time Not Arrived"
-        );
         uint128 amount = schedule.amount;
         delete releaseSchedules[sender];
         SafeERC20.safeTransfer(IERC20(vrtxToken), sender, uint256(amount));
     }
 
     function distributeRewards(
+        uint64 effectiveTime,
         uint128 baseAmount,
         uint128 feesAmount,
         uint128 usdcAmount
     ) external onlyOwner {
+        _applyPendingStakingRewards();
         uint128 amount = baseAmount + feesAmount;
         require(amount > 0, "must distribute non-zero rewards.");
         require(totalVrtx > ONE, "cannot distribute if no VRTX staked");
@@ -262,16 +248,38 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
             address(this),
             uint256(amount)
         );
-        globalYieldsBreakdown.push(
-            GlobalYieldsBreakdown({
-                distributionTime: uint64(block.timestamp),
-                baseYieldAmount: baseAmount,
-                feesYieldAmount: feesAmount,
-                totalVrtxBalance: totalVrtx,
-                usdcAmount: usdcAmount
-            })
-        );
-        totalVrtx += amount;
+        if (block.timestamp > effectiveTime) {
+            effectiveTime = uint64(block.timestamp);
+        }
+        pendingStakingRewards[
+            pendingStakingRewardsIndex.count++
+        ] = PendingStakingReward({
+            effectiveTime: effectiveTime,
+            baseAmount: baseAmount,
+            feesAmount: feesAmount,
+            usdcAmount: usdcAmount
+        });
+    }
+
+    function _applyPendingStakingRewards() internal {
+        QueueIndex memory index = pendingStakingRewardsIndex;
+        while (index.upTo < index.count) {
+            PendingStakingReward memory p = pendingStakingRewards[index.upTo];
+            if (block.timestamp < p.effectiveTime) break;
+            globalYieldsBreakdown.push(
+                GlobalYieldsBreakdown({
+                    distributionTime: p.effectiveTime,
+                    baseYieldAmount: p.baseAmount,
+                    feesYieldAmount: p.feesAmount,
+                    totalVrtxBalance: totalVrtx,
+                    usdcAmount: p.usdcAmount
+                })
+            );
+            totalVrtx += p.baseAmount + p.feesAmount;
+            delete pendingStakingRewards[index.upTo];
+            index.upTo += 1;
+        }
+        pendingStakingRewardsIndex = index;
     }
 
     function connectTradingWallet(address wallet) external {
@@ -297,8 +305,16 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
         return _getVrtxBalance(account);
     }
 
-    function getTotalVrtxBalance() external view returns (uint128) {
-        return totalVrtx;
+    function getTotalVrtxBalance() public view returns (uint128) {
+        uint128 result = totalVrtx;
+        QueueIndex memory index = pendingStakingRewardsIndex;
+        while (index.upTo < index.count) {
+            PendingStakingReward memory p = pendingStakingRewards[index.upTo];
+            if (block.timestamp < p.effectiveTime) break;
+            result += p.baseAmount + p.feesAmount;
+            index.upTo += 1;
+        }
+        return result;
     }
 
     function getLastActionTimes(
@@ -370,6 +386,38 @@ contract StakingV2 is IStakingV2, OwnableUpgradeable {
         view
         returns (GlobalYieldsBreakdown[] memory)
     {
-        return globalYieldsBreakdown;
+        QueueIndex memory index = pendingStakingRewardsIndex;
+        uint256 length = globalYieldsBreakdown.length;
+        for (uint64 i = index.upTo; i < index.count; i++) {
+            if (block.timestamp < pendingStakingRewards[i].effectiveTime) break;
+            length += 1;
+        }
+        GlobalYieldsBreakdown[] memory result = new GlobalYieldsBreakdown[](
+            length
+        );
+        for (uint256 i = 0; i < globalYieldsBreakdown.length; i++) {
+            result[i] = globalYieldsBreakdown[i];
+        }
+        for (uint64 i = index.upTo; i < index.count; i++) {
+            PendingStakingReward memory p = pendingStakingRewards[i];
+            if (block.timestamp < p.effectiveTime) break;
+            result[
+                i - index.upTo + globalYieldsBreakdown.length
+            ] = GlobalYieldsBreakdown({
+                distributionTime: p.effectiveTime,
+                baseYieldAmount: p.baseAmount,
+                feesYieldAmount: p.feesAmount,
+                totalVrtxBalance: totalVrtx,
+                usdcAmount: p.usdcAmount
+            });
+        }
+        for (uint256 i = 0; i < result.length; i++) {
+            // We inadvertently used 18 decimal places for usdcAmount in week 61.
+            // Below is the reformatting of the amount from 18 decimals to 6 decimals.
+            if (result[i].usdcAmount >= 10 ** 18) {
+                result[i].usdcAmount /= 10 ** 12;
+            }
+        }
+        return result;
     }
 }

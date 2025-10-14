@@ -6,7 +6,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-contract NadoToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
+contract VertexToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     event MintAccessGranted(address indexed minter);
@@ -23,7 +23,7 @@ contract NadoToken is Initializable, ERC20Upgradeable, OwnableUpgradeable {
     }
 
     function initialize() external initializer {
-        __ERC20_init("Nado", "NADO");
+        __ERC20_init("Vertex", "VRTX");
         __Ownable_init();
     }
 

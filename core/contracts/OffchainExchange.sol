@@ -14,6 +14,7 @@ import "./EndpointGated.sol";
 import "./common/Errors.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
+import "./interfaces/IEndpoint.sol";
 
 contract OffchainExchange is
     IOffchainExchange,
@@ -143,7 +144,10 @@ contract OffchainExchange is
     }
 
     function tryCloseIsolatedSubaccount(bytes32 subaccount) external virtual {
-        require(msg.sender == address(clearinghouse), ERR_UNAUTHORIZED);
+        require(
+            msg.sender == getEndpoint() || msg.sender == address(clearinghouse),
+            ERR_UNAUTHORIZED
+        );
         _tryCloseIsolatedSubaccount(subaccount);
     }
 
@@ -369,7 +373,7 @@ contract OffchainExchange is
 
     function _isTWAP(uint128 appendix) internal pure returns (bool) {
         uint128 trigger = (appendix >> 12) & 3;
-        return trigger == 2;
+        return trigger >= 2;
     }
 
     function _validateOrder(
@@ -383,10 +387,7 @@ contract OffchainExchange is
         if ((signedOrder.order.appendix & 255) != ORDER_VERSION) {
             return false;
         }
-        if (
-            signedOrder.order.sender == X_ACCOUNT ||
-            signedOrder.order.sender == N_ACCOUNT
-        ) {
+        if (signedOrder.order.sender == X_ACCOUNT) {
             return true;
         }
         IEndpoint.Order memory order = signedOrder.order;
@@ -422,13 +423,14 @@ contract OffchainExchange is
         }
 
         return
-            (order.priceX18 > 0) &&
-            _checkSignature(
-                order.sender,
-                orderDigest,
-                linkedSigner,
-                signedOrder.signature
-            ) &&
+            ((order.priceX18 > 0) || _isTWAP(order.appendix)) &&
+            (signedOrder.order.sender == N_ACCOUNT ||
+                _checkSignature(
+                    order.sender,
+                    orderDigest,
+                    linkedSigner,
+                    signedOrder.signature
+                )) &&
             // valid amount
             (order.amount != 0) &&
             !_expired(order.expiration);
@@ -724,9 +726,6 @@ contract OffchainExchange is
                 .takerAmountDelta;
         }
 
-        _tryCloseIsolatedSubaccount(taker.order.sender);
-        _tryCloseIsolatedSubaccount(maker.order.sender);
-
         emitTakerEvent(callState.productId, taker, ordersInfo);
     }
 
@@ -847,6 +846,7 @@ contract OffchainExchange is
             customFeeAddresses.push(user);
         }
         feeTiers[user] = newTier;
+        emit FeeTierUpdate(user, newTier);
     }
 
     function updateTierFeeRates(IEndpoint.UpdateTierFeeRates memory txn)
@@ -1013,5 +1013,77 @@ contract OffchainExchange is
         returns (bytes32)
     {
         return parentSubaccounts[subaccount];
+    }
+
+    function assertProduct(bytes calldata transaction) external virtual {
+        IEndpoint.AssertProduct memory expected = abi.decode(
+            transaction[1:],
+            (IEndpoint.AssertProduct)
+        );
+
+        IClearinghouse clearinghouseContract = IClearinghouse(clearinghouse);
+
+        require(
+            clearinghouseContract.getEngineByProduct(expected.productId) !=
+                address(0),
+            ERR_PRODUCT_NOT_MATCH
+        );
+
+        IProductEngine engine = IProductEngine(
+            clearinghouseContract.getEngineByProduct(expected.productId)
+        );
+        bool isSpot = engine.getEngineType() == IProductEngine.EngineType.SPOT;
+
+        MarketInfo memory marketInfoData = getMarketInfo(expected.productId);
+        int128 actualSizeIncrement = marketInfoData.sizeIncrement;
+        int128 actualMinSize = marketInfoData.minSize;
+        uint32 actualQuoteId = marketInfoData.quoteId;
+
+        bytes32 actualOthersHash;
+        if (isSpot) {
+            ISpotEngine spotEngineContract = ISpotEngine(
+                clearinghouseContract.getEngineByType(
+                    IProductEngine.EngineType.SPOT
+                )
+            );
+            ISpotEngine.Config memory config = spotEngineContract.getConfig(
+                expected.productId
+            );
+            RiskHelper.Risk memory risk = engine.getRisk(expected.productId);
+            actualOthersHash = keccak256(
+                abi.encode(
+                    config.token,
+                    config.interestInflectionUtilX18,
+                    config.interestFloorX18,
+                    config.interestSmallCapX18,
+                    config.interestLargeCapX18,
+                    config.withdrawFeeX18,
+                    config.minDepositRateX18,
+                    risk.longWeightInitialX18,
+                    risk.longWeightMaintenanceX18,
+                    risk.shortWeightInitialX18,
+                    risk.shortWeightMaintenanceX18
+                )
+            );
+        } else {
+            RiskHelper.Risk memory risk = engine.getRisk(expected.productId);
+            actualOthersHash = keccak256(
+                abi.encode(
+                    risk.longWeightInitialX18,
+                    risk.longWeightMaintenanceX18,
+                    risk.shortWeightInitialX18,
+                    risk.shortWeightMaintenanceX18
+                )
+            );
+        }
+
+        require(
+            actualSizeIncrement == expected.sizeIncrement &&
+                actualMinSize == expected.minSize &&
+                actualQuoteId == expected.quoteId &&
+                actualOthersHash == expected.othersHash &&
+                expected.isSpot == isSpot,
+            ERR_PRODUCT_NOT_MATCH
+        );
     }
 }

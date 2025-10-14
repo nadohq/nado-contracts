@@ -113,5 +113,7 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function setWithdrawPool(address _withdrawPool) external;
 
+    function setSpreads(uint256 _spreads) external;
+
     function clearNlpPoolPosition(bytes32 subaccount) external;
 }

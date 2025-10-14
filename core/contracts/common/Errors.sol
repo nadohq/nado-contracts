@@ -136,3 +136,5 @@ string constant ERR_INVALID_NLP_POOL = "INP";
 string constant ERR_INVALID_NLP_REBALANCE = "INR";
 
 string constant ERR_UNLOCKED_NLP_INSUFFICIENT = "UNI";
+
+string constant ERR_PRODUCT_NOT_MATCH = "PNM";

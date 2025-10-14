@@ -30,13 +30,13 @@ contract PerpEngine is PerpEngineState {
      */
 
     /// @notice adds a new product with default parameters
-    function addProduct(
+    function addOrUpdateProduct(
         uint32 productId,
         int128 sizeIncrement,
         int128 minSize,
         RiskHelper.RiskStore calldata riskStore
     ) public onlyOwner {
-        _addProductForId(
+        bool isNewProduct = _addOrUpdateProduct(
             productId,
             QUOTE_PRODUCT_ID,
             sizeIncrement,
@@ -44,43 +44,17 @@ contract PerpEngine is PerpEngineState {
             riskStore
         );
 
-        _setState(
-            productId,
-            State({
-                cumulativeFundingLongX18: 0,
-                cumulativeFundingShortX18: 0,
-                availableSettle: 0,
-                openInterest: 0
-            })
-        );
-    }
-
-    /// @notice changes the configs of a product, if a new book is provided
-    /// also clears the book
-    function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
-        UpdateProductTx memory txn = abi.decode(rawTxn, (UpdateProductTx));
-        RiskHelper.RiskStore memory riskStore = txn.riskStore;
-
-        require(
-            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance,
-            ERR_BAD_PRODUCT_CONFIG
-        );
-
-        RiskHelper.RiskStore memory r = _risk().value[txn.productId];
-        r.longWeightInitial = riskStore.longWeightInitial;
-        r.shortWeightInitial = riskStore.shortWeightInitial;
-        r.longWeightMaintenance = riskStore.longWeightMaintenance;
-        r.shortWeightMaintenance = riskStore.shortWeightMaintenance;
-        _risk().value[txn.productId] = r;
-
-        _exchange().updateMarket(
-            txn.productId,
-            type(uint32).max,
-            txn.sizeIncrement,
-            txn.minSize
-        );
+        if (isNewProduct) {
+            _setState(
+                productId,
+                State({
+                    cumulativeFundingLongX18: 0,
+                    cumulativeFundingShortX18: 0,
+                    availableSettle: 0,
+                    openInterest: 0
+                })
+            );
+        }
     }
 
     function updateBalance(

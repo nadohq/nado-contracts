@@ -704,6 +704,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             txn.contractNames.length == txn.codeHashes.length,
             ERR_CODE_NOT_MATCH
         );
+        require(spreads == txn.spreads, ERR_CODE_NOT_MATCH);
         for (uint256 i = 0; i < txn.contractNames.length; i++) {
             bytes32 expectedCodeHash = IProxyManager(_getProxyManager())
                 .getCodeHash(txn.contractNames[i]);
@@ -733,6 +734,10 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     function setWithdrawPool(address _withdrawPool) external onlyOwner {
         require(_withdrawPool != address(0));
         withdrawPool = _withdrawPool;
+    }
+
+    function setSpreads(uint256 _spreads) external virtual onlyOwner {
+        spreads = _spreads;
     }
 
     function getSlowModeFee() external view returns (uint256) {

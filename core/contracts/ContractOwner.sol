@@ -24,13 +24,15 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     IClearinghouse internal clearinghouse;
     Verifier internal verifier;
     address payable internal wrappedNative;
-    bytes[] internal updateProductTxs;
 
-    // using `bytes[]` in case we will change the layout of the calls.
-    bytes[] internal rawSpotAddProductCalls;
-    bytes[] internal rawPerpAddProductCalls;
+    bytes[] internal updateProductTxs; // deprecated
+    bytes[] internal rawSpotAddProductCalls; // deprecated
+    bytes[] internal rawPerpAddProductCalls; // deprecated
 
     mapping(bytes32 => address payable) public directDepositV1Address;
+
+    bytes[] internal rawSpotAddOrUpdateProductCalls;
+    bytes[] internal rawPerpAddOrUpdateProductCalls;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -64,7 +66,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         _;
     }
 
-    struct SpotAddProductCall {
+    struct SpotAddOrUpdateProductCall {
         uint32 productId;
         uint32 quoteId;
         int128 sizeIncrement;
@@ -73,14 +75,14 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         RiskHelper.RiskStore riskStore;
     }
 
-    struct PerpAddProductCall {
+    struct PerpAddOrUpdateProductCall {
         uint32 productId;
         int128 sizeIncrement;
         int128 minSize;
         RiskHelper.RiskStore riskStore;
     }
 
-    function submitSpotAddProductCall(
+    function submitSpotAddOrUpdateProductCall(
         uint32 productId,
         uint32 quoteId,
         int128 sizeIncrement,
@@ -88,16 +90,16 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         ISpotEngine.Config calldata config,
         RiskHelper.RiskStore calldata riskStore
     ) external onlyDeployer {
-        uint32[] memory pendingIds = pendingSpotAddProductIds();
+        uint32[] memory pendingIds = pendingSpotAddOrUpdateProductIds();
         for (uint256 i = 0; i < pendingIds.length; i++) {
             require(
                 productId != pendingIds[i],
-                "trying to add a spot product twice."
+                "trying to add or update a spot product twice."
             );
         }
-        rawSpotAddProductCalls.push(
+        rawSpotAddOrUpdateProductCalls.push(
             abi.encode(
-                SpotAddProductCall(
+                SpotAddOrUpdateProductCall(
                     productId,
                     quoteId,
                     sizeIncrement,
@@ -109,45 +111,50 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         );
     }
 
-    function submitPerpAddProductCall(
+    function submitPerpAddOrUpdateProductCall(
         uint32 productId,
         int128 sizeIncrement,
         int128 minSize,
         RiskHelper.RiskStore calldata riskStore
     ) external onlyDeployer {
-        uint32[] memory pendingIds = pendingPerpAddProductIds();
+        uint32[] memory pendingIds = pendingPerpAddOrUpdateProductIds();
         for (uint256 i = 0; i < pendingIds.length; i++) {
             require(
                 productId != pendingIds[i],
-                "trying to add a perp product twice."
+                "trying to add or update a perp product twice."
             );
         }
-        rawPerpAddProductCalls.push(
+        rawPerpAddOrUpdateProductCalls.push(
             abi.encode(
-                PerpAddProductCall(productId, sizeIncrement, minSize, riskStore)
+                PerpAddOrUpdateProductCall(
+                    productId,
+                    sizeIncrement,
+                    minSize,
+                    riskStore
+                )
             )
         );
     }
 
-    function clearSpotAddProductCalls() external onlyDeployer {
-        delete rawSpotAddProductCalls;
+    function clearSpotAddOrUpdateProductCalls() external onlyDeployer {
+        delete rawSpotAddOrUpdateProductCalls;
     }
 
-    function clearPerpAddProductCalls() external onlyDeployer {
-        delete rawPerpAddProductCalls;
+    function clearPerpAddOrUpdateProductCalls() external onlyDeployer {
+        delete rawPerpAddOrUpdateProductCalls;
     }
 
-    function addProducts(uint32[] memory spotIds, uint32[] memory perpIds)
-        external
-        onlyOwner
-    {
-        for (uint256 i = 0; i < rawSpotAddProductCalls.length; i++) {
-            SpotAddProductCall memory call = abi.decode(
-                rawSpotAddProductCalls[i],
-                (SpotAddProductCall)
+    function addOrUpdateProducts(
+        uint32[] memory spotIds,
+        uint32[] memory perpIds
+    ) external onlyOwner {
+        for (uint256 i = 0; i < rawSpotAddOrUpdateProductCalls.length; i++) {
+            SpotAddOrUpdateProductCall memory call = abi.decode(
+                rawSpotAddOrUpdateProductCalls[i],
+                (SpotAddOrUpdateProductCall)
             );
             require(spotIds[i] == call.productId, "spot id doesn't match.");
-            spotEngine.addProduct(
+            spotEngine.addOrUpdateProduct(
                 call.productId,
                 call.quoteId,
                 call.sizeIncrement,
@@ -156,85 +163,64 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
                 call.riskStore
             );
         }
-        delete rawSpotAddProductCalls;
+        delete rawSpotAddOrUpdateProductCalls;
 
-        for (uint256 i = 0; i < rawPerpAddProductCalls.length; i++) {
-            PerpAddProductCall memory call = abi.decode(
-                rawPerpAddProductCalls[i],
-                (PerpAddProductCall)
+        for (uint256 i = 0; i < rawPerpAddOrUpdateProductCalls.length; i++) {
+            PerpAddOrUpdateProductCall memory call = abi.decode(
+                rawPerpAddOrUpdateProductCalls[i],
+                (PerpAddOrUpdateProductCall)
             );
             require(perpIds[i] == call.productId, "perp id doesn't match.");
-            perpEngine.addProduct(
+            perpEngine.addOrUpdateProduct(
                 call.productId,
                 call.sizeIncrement,
                 call.minSize,
                 call.riskStore
             );
         }
-        delete rawPerpAddProductCalls;
+        delete rawPerpAddOrUpdateProductCalls;
     }
 
-    function pendingSpotAddProductIds() public view returns (uint32[] memory) {
+    function pendingSpotAddOrUpdateProductIds()
+        public
+        view
+        returns (uint32[] memory)
+    {
         uint32[] memory productIds = new uint32[](
-            rawSpotAddProductCalls.length
+            rawSpotAddOrUpdateProductCalls.length
         );
-        for (uint256 i = 0; i < rawSpotAddProductCalls.length; i++) {
-            SpotAddProductCall memory call = abi.decode(
-                rawSpotAddProductCalls[i],
-                (SpotAddProductCall)
+        for (uint256 i = 0; i < rawSpotAddOrUpdateProductCalls.length; i++) {
+            SpotAddOrUpdateProductCall memory call = abi.decode(
+                rawSpotAddOrUpdateProductCalls[i],
+                (SpotAddOrUpdateProductCall)
             );
             productIds[i] = call.productId;
         }
         return productIds;
     }
 
-    function pendingPerpAddProductIds() public view returns (uint32[] memory) {
+    function pendingPerpAddOrUpdateProductIds()
+        public
+        view
+        returns (uint32[] memory)
+    {
         uint32[] memory productIds = new uint32[](
-            rawPerpAddProductCalls.length
+            rawPerpAddOrUpdateProductCalls.length
         );
-        for (uint256 i = 0; i < rawPerpAddProductCalls.length; i++) {
-            PerpAddProductCall memory call = abi.decode(
-                rawPerpAddProductCalls[i],
-                (PerpAddProductCall)
+        for (uint256 i = 0; i < rawPerpAddOrUpdateProductCalls.length; i++) {
+            PerpAddOrUpdateProductCall memory call = abi.decode(
+                rawPerpAddOrUpdateProductCalls[i],
+                (PerpAddOrUpdateProductCall)
             );
             productIds[i] = call.productId;
         }
         return productIds;
     }
 
-    function hasPendingAddProductCalls() public view returns (bool) {
+    function hasPendingAddOrUpdateProductCalls() public view returns (bool) {
         return
-            rawPerpAddProductCalls.length > 0 ||
-            rawSpotAddProductCalls.length > 0;
-    }
-
-    function submitUpdateProductTx(bytes calldata slowModeTx)
-        external
-        onlyDeployer
-    {
-        updateProductTxs.push(slowModeTx);
-    }
-
-    function clearUpdateProductTxs() external onlyDeployer {
-        delete updateProductTxs;
-    }
-
-    function batchSubmitUpdateProductTxs(bytes[] calldata slowModeTxs)
-        external
-        onlyDeployer
-    {
-        for (uint256 i = 0; i < slowModeTxs.length; i++) {
-            bytes memory txn = slowModeTxs[i];
-            updateProductTxs.push(txn);
-        }
-    }
-
-    function updateProducts() external onlyOwner {
-        for (uint256 i = 0; i < updateProductTxs.length; i++) {
-            bytes memory txn = updateProductTxs[i];
-            endpoint.submitSlowModeTransaction(txn);
-        }
-        delete updateProductTxs;
+            rawPerpAddOrUpdateProductCalls.length > 0 ||
+            rawSpotAddOrUpdateProductCalls.length > 0;
     }
 
     function withdrawInsurance(uint128 amount, address sendTo)
@@ -247,6 +233,47 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         );
         bytes memory txn = abi.encodePacked(
             uint8(IEndpoint.TransactionType.WithdrawInsurance),
+            abi.encode(_txn)
+        );
+        endpoint.submitSlowModeTransaction(txn);
+    }
+
+    function addNlpPool(address owner, uint128 balanceWeightX18)
+        external
+        onlyOwner
+    {
+        IEndpoint.AddNlpPool memory _txn = IEndpoint.AddNlpPool(
+            owner,
+            balanceWeightX18
+        );
+        bytes memory txn = abi.encodePacked(
+            uint8(IEndpoint.TransactionType.AddNlpPool),
+            abi.encode(_txn)
+        );
+        endpoint.submitSlowModeTransaction(txn);
+    }
+
+    function updateNlpPool(
+        uint64 poolId,
+        address owner,
+        uint128 balanceWeightX18
+    ) external onlyOwner {
+        IEndpoint.UpdateNlpPool memory _txn = IEndpoint.UpdateNlpPool(
+            poolId,
+            owner,
+            balanceWeightX18
+        );
+        bytes memory txn = abi.encodePacked(
+            uint8(IEndpoint.TransactionType.UpdateNlpPool),
+            abi.encode(_txn)
+        );
+        endpoint.submitSlowModeTransaction(txn);
+    }
+
+    function deleteNlpPool(uint64 poolId) external onlyOwner {
+        IEndpoint.DeleteNlpPool memory _txn = IEndpoint.DeleteNlpPool(poolId);
+        bytes memory txn = abi.encodePacked(
+            uint8(IEndpoint.TransactionType.DeleteNlpPool),
             abi.encode(_txn)
         );
         endpoint.submitSlowModeTransaction(txn);
@@ -321,10 +348,6 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         }
     }
 
-    function hasPendingUpdateProductTxs() public view returns (bool) {
-        return updateProductTxs.length > 0;
-    }
-
     function addEngine(
         address engine,
         address offchainExchange,
@@ -361,6 +384,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
 
     function setWithdrawPool(address _withdrawPool) external onlyOwner {
         clearinghouse.setWithdrawPool(_withdrawPool);
+    }
+
+    function setSpreads(uint256 spreads) external onlyOwner {
+        clearinghouse.setSpreads(spreads);
     }
 
     function removeWithdrawPoolLiquidity(

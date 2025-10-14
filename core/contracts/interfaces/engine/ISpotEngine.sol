@@ -45,14 +45,6 @@ interface ISpotEngine is IProductEngine {
         int128 amountNormalized;
     }
 
-    struct UpdateProductTx {
-        uint32 productId;
-        int128 sizeIncrement;
-        int128 minSize;
-        Config config;
-        RiskHelper.RiskStore riskStore;
-    }
-
     struct NlpLockedBalance {
         Balance balance;
         uint128 unlockedAt;

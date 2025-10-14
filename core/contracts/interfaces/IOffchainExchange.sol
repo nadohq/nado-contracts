@@ -30,6 +30,8 @@ interface IOffchainExchange {
         bytes32 indexed parentSubaccount
     );
 
+    event FeeTierUpdate(address indexed user, uint32 feeTier);
+
     struct FeeRates {
         int128 makerRateX18;
         int128 takerRateX18;
@@ -96,4 +98,6 @@ interface IOffchainExchange {
 
     function updateTierFeeRates(IEndpoint.UpdateTierFeeRates memory txn)
         external;
+
+    function assertProduct(bytes calldata tx) external;
 }

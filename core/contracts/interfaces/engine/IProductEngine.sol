@@ -6,7 +6,7 @@ import "../clearinghouse/IClearinghouse.sol";
 import "../../libraries/RiskHelper.sol";
 
 interface IProductEngine {
-    event AddProduct(uint32 productId);
+    event AddOrUpdateProduct(uint32 productId);
     event PriceQuery(uint32 productId);
 
     enum EngineType {
@@ -51,8 +51,6 @@ interface IProductEngine {
         uint32 productId,
         IProductEngine.HealthType healthType
     ) external returns (IProductEngine.CoreRisk memory);
-
-    function updateProduct(bytes calldata txn) external;
 
     function getClearinghouse() external view returns (address);
 

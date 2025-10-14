@@ -225,13 +225,13 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         return productIds;
     }
 
-    function _addProductForId(
+    function _addOrUpdateProduct(
         uint32 productId,
         uint32 quoteId,
         int128 sizeIncrement,
         int128 minSize,
         RiskHelper.RiskStore memory riskStore
-    ) internal {
+    ) internal returns (bool isNewProduct) {
         require(
             riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
                 riskStore.longWeightMaintenance <= 10**9 &&
@@ -241,26 +241,28 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
             ERR_BAD_PRODUCT_CONFIG
         );
 
-        _risk().value[productId] = riskStore;
-
-        // register product with clearinghouse
-        _clearinghouse.registerProduct(productId);
-
-        productIds.push(productId);
-        // product ids are in ascending order
-        for (uint256 i = productIds.length - 1; i > 0; i--) {
-            if (productIds[i] < productIds[i - 1]) {
-                uint32 t = productIds[i];
-                productIds[i] = productIds[i - 1];
-                productIds[i - 1] = t;
-            } else {
-                break;
-            }
+        // product id is in ascending order
+        if (
+            productIds.length == 0 ||
+            productId > productIds[productIds.length - 1]
+        ) {
+            productIds.push(productId);
+            _clearinghouse.registerProduct(productId);
+            isNewProduct = true;
         }
 
+        if (isNewProduct) {
+            IEndpoint(getEndpoint()).setInitialPrice(
+                productId,
+                riskStore.priceX18
+            );
+        } else {
+            riskStore.priceX18 = _risk().value[productId].priceX18;
+        }
+        _risk().value[productId] = riskStore;
         _exchange().updateMarket(productId, quoteId, sizeIncrement, minSize);
 
-        emit AddProduct(productId);
+        emit AddOrUpdateProduct(productId);
     }
 
     function _exchange() internal view returns (IOffchainExchange) {

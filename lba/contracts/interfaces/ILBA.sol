@@ -7,7 +7,7 @@ interface ILBA {
         DepositingTokens,
         WithdrawingUsdc,
         LBAFinished,
-        DepositedToNado,
+        DepositedToVertex,
         LpMinted,
         LpVesting,
         LpVested
@@ -62,6 +62,8 @@ interface ILBA {
     function getConfig() external view returns (Config memory);
 
     function getState() external view returns (State memory);
+
+    function getClaimedRewards(address account) external view returns (uint256);
 
     function getClaimableRewards(
         address account
