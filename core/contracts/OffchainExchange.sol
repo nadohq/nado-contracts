@@ -343,7 +343,7 @@ contract OffchainExchange is
 
     /*
         | value   | reserved | trigger | reduce only | order type| isolated | version |
-        | 96 bits | 18 bits  | 2 bits  | 1 bit       | 2 bits    | 1 bit    | 8 bits  |
+        | 64 bits | 50 bits  | 2 bits  | 1 bit       | 2 bits    | 1 bit    | 8 bits  |
     */
 
     function _isIsolated(uint128 appendix) internal pure returns (bool) {
@@ -351,7 +351,7 @@ contract OffchainExchange is
     }
 
     function _isolatedMargin(uint128 appendix) internal pure returns (uint128) {
-        return appendix >> 32;
+        return (appendix >> 64) * (10**12);
     }
 
     function _isReduceOnly(uint128 appendix) internal pure returns (bool) {
@@ -376,6 +376,10 @@ contract OffchainExchange is
         return trigger >= 2;
     }
 
+    function orderVersion() public pure returns (uint128) {
+        return 1;
+    }
+
     function _validateOrder(
         CallState memory callState,
         MarketInfo memory,
@@ -384,7 +388,7 @@ contract OffchainExchange is
         bool isTaker,
         address linkedSigner
     ) internal view returns (bool) {
-        if ((signedOrder.order.appendix & 255) != ORDER_VERSION) {
+        if ((signedOrder.order.appendix & 255) != orderVersion()) {
             return false;
         }
         if (signedOrder.order.sender == X_ACCOUNT) {

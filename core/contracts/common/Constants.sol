@@ -45,8 +45,6 @@ uint32 constant NLP_PRODUCT_ID = 11;
 
 uint96 constant MASK_6_BYTES = 0xFFFFFFFFFFFF000000000000;
 
-uint128 constant ORDER_VERSION = 0;
-
 uint64 constant SLOW_MODE_TX_DELAY = 3 * 24 * 60 * 60; // 3 days
 
 uint64 constant NLP_LOCK_PERIOD = 4 * 24 * 60 * 60; // 4 days

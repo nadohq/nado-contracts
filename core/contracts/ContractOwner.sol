@@ -12,7 +12,7 @@ import "./PerpEngine.sol";
 import "./Endpoint.sol";
 import "./Verifier.sol";
 import "./BaseWithdrawPool.sol";
-import "./DirectDepositV1.sol";
+import {DirectDepositV1} from "./DirectDepositV1.sol";
 
 contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     using MathSD21x18 for int128;
@@ -442,5 +442,9 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             }
         }
         return false;
+    }
+
+    function resetDirectDepositV1(bytes32 subaccount) external onlyOwner {
+        directDepositV1Address[subaccount] = payable(0);
     }
 }
