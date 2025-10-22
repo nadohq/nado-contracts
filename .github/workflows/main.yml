@@ -45,31 +45,7 @@ jobs:
           cd core
           HUSKY=0 yarn install --frozen-lockfile
 
-      # LBA project
-      - name: Get lba yarn cache directory path
-        id: lba-yarn-cache-dir-path
-        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
-
-      - name: Cache lba yarn cache
-        uses: actions/cache@v3
-        id: lba-yarn-cache
-        with:
-          path: ${{ steps.lba-yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-yarn-lba-${{ hashFiles('lba/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-lba-
-
-      - name: Install dependencies in lba
-        run: |
-          cd lba
-          HUSKY=0 yarn install --frozen-lockfile
-
       - name: Run lint in core
         run: |
           cd core
-          yarn run lint
-
-      - name: Run lint in lba
-        run: |
-          cd lba
           yarn run lint
