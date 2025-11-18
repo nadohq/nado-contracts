@@ -177,11 +177,12 @@ contract PerpEngine is PerpEngineState {
         return insurance;
     }
 
-    function manualAssert(int128[] calldata openInterests) external view {
-        for (uint128 i = 0; i < openInterests.length; ++i) {
+    function manualAssert(bytes[] calldata _states) external view {
+        for (uint128 i = 0; i < _states.length; ++i) {
             uint32 productId = productIds[i];
             require(
-                states[productId].openInterest == openInterests[i],
+                keccak256(abi.encode(states[productId])) ==
+                    keccak256(_states[i]),
                 ERR_DSYNC
             );
         }

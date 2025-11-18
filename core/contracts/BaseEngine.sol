@@ -169,7 +169,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
 
         if (amount != 0) {
             if (weight == 2 * ONE) {
-                return type(int128).min;
+                return -INF;
             }
             health += amount.mul(weight).mul(risk.priceX18);
             emit PriceQuery(productId);

@@ -87,7 +87,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         health = spotEngine.getHealthContribution(subaccount, healthType);
         // min health means that it is attempting to borrow a spot that exists outside
         // of the risk system -- return min health to error out this action
-        if (health == (type(int128).min)) {
+        if (health == -INF) {
             return health;
         }
         health += perpEngine.getHealthContribution(subaccount, healthType);
@@ -677,7 +677,11 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         return spreads;
     }
 
-    function requireMinDeposit(uint32 productId, uint128 amount) external {
+    function requireMinDeposit(
+        uint32 productId,
+        uint128 amount,
+        int256 minDepositAmount
+    ) external {
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         uint8 decimals = _decimals(productId);
         require(decimals <= MAX_DECIMALS);
@@ -690,7 +694,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         }
 
         require(
-            priceX18.mul(amountRealized) >= MIN_DEPOSIT_AMOUNT,
+            priceX18.mul(amountRealized) >= minDepositAmount,
             ERR_DEPOSIT_TOO_SMALL
         );
     }
@@ -717,14 +721,15 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             transaction[1:],
             (IEndpoint.ManualAssert)
         );
+        require(txn.insurance == insurance, ERR_DSYNC);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
         IPerpEngine perpEngine = IPerpEngine(
             address(engineByType[IProductEngine.EngineType.PERP])
         );
-        perpEngine.manualAssert(txn.openInterests);
-        spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
+        perpEngine.manualAssert(txn.perpStates);
+        spotEngine.manualAssert(txn.spotStates);
     }
 
     function getWithdrawPool() external view returns (address) {

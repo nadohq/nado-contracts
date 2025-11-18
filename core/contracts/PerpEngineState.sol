@@ -134,6 +134,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                 );
             }
             _setState(productId, state);
+            emit PriceQuery(productId);
         }
     }
 }

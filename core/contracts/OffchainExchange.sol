@@ -57,6 +57,8 @@ contract OffchainExchange is
     // how much margin does an isolated order require
     mapping(bytes32 => int128) internal digestToMargin;
 
+    uint128 internal nonDefaultFeeTierMask;
+
     function getAllFeeTiers(address[] memory users)
         external
         view
@@ -605,6 +607,17 @@ contract OffchainExchange is
         MarketInfo memory market = getMarketInfo(callState.productId);
         IEndpoint.SignedOrder memory taker = txn.matchOrders.taker;
         IEndpoint.SignedOrder memory maker = txn.matchOrders.maker;
+
+        // isolated subaccounts cannot be used as sender
+        require(
+            !RiskHelper.isIsolatedSubaccount(taker.order.sender),
+            ERR_INVALID_TAKER
+        );
+        require(
+            !RiskHelper.isIsolatedSubaccount(maker.order.sender),
+            ERR_INVALID_MAKER
+        );
+
         ordersInfo = OrdersInfo({
             takerDigest: getDigest(callState.productId, taker.order),
             makerDigest: getDigest(callState.productId, maker.order),
@@ -820,15 +833,14 @@ contract OffchainExchange is
         view
         returns (FeeRates memory)
     {
-        if (tier == 0) {
-            // default fee tier: 2 bps for takers, 0 for makers
-            return
-                FeeRates({
-                    makerRateX18: 0,
-                    takerRateX18: 200_000_000_000_000 // 2 bps
-                });
+        if (nonDefaultFeeTierMask & (1 << tier) != 0) {
+            return feeRates[tier][productId];
         }
-        return feeRates[tier][productId];
+        return
+            FeeRates({
+                makerRateX18: 0,
+                takerRateX18: 200_000_000_000_000 // 2 bps
+            });
     }
 
     function _getUserFeeRates(bytes32 subaccount, uint32 productId)
@@ -881,6 +893,7 @@ contract OffchainExchange is
                 txn.takerRateX18
             );
         }
+        nonDefaultFeeTierMask |= uint128(1) << txn.tier;
     }
 
     function createIsolatedSubaccount(
