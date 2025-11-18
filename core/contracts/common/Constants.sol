@@ -37,7 +37,9 @@ int128 constant LIQUIDATION_FEE_FRACTION = 500_000_000_000_000_000; // 50%
 
 int128 constant INTEREST_FEE_FRACTION = 200_000_000_000_000_000; // 20%
 
-int256 constant MIN_DEPOSIT_AMOUNT = 5 * ONE;
+int256 constant MIN_DEPOSIT_AMOUNT = ONE / 10; // $0.1
+
+int256 constant MIN_FIRST_DEPOSIT_AMOUNT = 5 * ONE; // $5
 
 uint32 constant MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS = 10;
 
@@ -48,3 +50,5 @@ uint96 constant MASK_6_BYTES = 0xFFFFFFFFFFFF000000000000;
 uint64 constant SLOW_MODE_TX_DELAY = 3 * 24 * 60 * 60; // 3 days
 
 uint64 constant NLP_LOCK_PERIOD = 4 * 24 * 60 * 60; // 4 days
+
+int128 constant INF = type(int128).max / 128;

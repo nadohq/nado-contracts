@@ -146,9 +146,9 @@ interface IEndpoint {
     }
 
     struct ManualAssert {
-        int128[] openInterests;
-        int128[] totalDeposits;
-        int128[] totalBorrows;
+        int128 insurance;
+        bytes[] spotStates;
+        bytes[] perpStates;
     }
 
     struct AssertCode {
@@ -291,13 +291,6 @@ interface IEndpoint {
         bytes12 subaccountName,
         uint32 productId,
         uint128 amount
-    ) external;
-
-    function depositCollateralWithReferral(
-        bytes12 subaccountName,
-        uint32 productId,
-        uint128 amount,
-        string calldata referralCode
     ) external;
 
     function depositCollateralWithReferral(

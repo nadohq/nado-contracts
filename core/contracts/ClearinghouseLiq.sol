@@ -320,16 +320,7 @@ contract ClearinghouseLiq is
             require(balance.amount == 0, ERR_NOT_FINALIZABLE_SUBACCOUNT);
         }
 
-        ISpotEngine.Balance memory quoteBalance = spotEngine.getBalance(
-            QUOTE_PRODUCT_ID,
-            txn.liquidatee
-        );
-
-        v.insurance = insurance;
-        v.insurance -= lastLiquidationFees;
-        v.canLiquidateMore = (quoteBalance.amount + v.insurance) > 0;
-
-        // settle all negative pnl until quote balance becomes 0
+        // settle all positive pnl
         for (uint32 i = 0; i < v.perpIds.length; ++i) {
             uint32 perpId = v.perpIds[i];
             IPerpEngine.Balance memory balance = perpEngine.getBalance(
@@ -347,6 +338,12 @@ contract ClearinghouseLiq is
             }
         }
 
+        ISpotEngine.Balance memory quoteBalance = spotEngine.getBalance(
+            QUOTE_PRODUCT_ID,
+            txn.liquidatee
+        );
+
+        // settle all negative pnl until quote balance becomes 0
         for (uint32 i = 0; i < v.perpIds.length; ++i) {
             uint32 perpId = v.perpIds[i];
             IPerpEngine.Balance memory balance = perpEngine.getBalance(
@@ -368,6 +365,10 @@ contract ClearinghouseLiq is
                 quoteBalance.amount += canSettle;
             }
         }
+
+        v.insurance = insurance;
+        v.insurance -= lastLiquidationFees;
+        v.canLiquidateMore = (quoteBalance.amount + v.insurance) > 0;
 
         if (v.canLiquidateMore) {
             for (uint32 i = 1; i < v.spotIds.length; ++i) {

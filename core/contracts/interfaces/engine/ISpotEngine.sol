@@ -90,10 +90,7 @@ interface ISpotEngine is IProductEngine {
 
     function updateStates(uint128 dt) external;
 
-    function manualAssert(
-        int128[] calldata totalDeposits,
-        int128[] calldata totalBorrows
-    ) external view;
+    function manualAssert(bytes[] calldata _states) external view;
 
     function socializeSubaccount(bytes32 subaccount) external;
 

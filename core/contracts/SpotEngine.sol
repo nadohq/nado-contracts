@@ -265,23 +265,12 @@ contract SpotEngine is SpotEngineState {
         }
     }
 
-    function manualAssert(
-        int128[] calldata totalDeposits,
-        int128[] calldata totalBorrows
-    ) external view {
-        for (uint128 i = 0; i < totalDeposits.length; ++i) {
+    function manualAssert(bytes[] calldata _states) external view {
+        for (uint128 i = 0; i < _states.length; ++i) {
             uint32 productId = productIds[i];
-            State memory state = states[productId];
             require(
-                state.totalDepositsNormalized.mul(
-                    state.cumulativeDepositsMultiplierX18
-                ) == totalDeposits[i],
-                ERR_DSYNC
-            );
-            require(
-                state.totalBorrowsNormalized.mul(
-                    state.cumulativeBorrowsMultiplierX18
-                ) == totalBorrows[i],
+                keccak256(abi.encode(states[productId])) ==
+                    keccak256(_states[i]),
                 ERR_DSYNC
             );
         }

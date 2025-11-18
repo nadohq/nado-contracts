@@ -56,7 +56,7 @@ interface IPerpEngine is IProductEngine {
 
     function updateStates(uint128 dt, int128[] calldata avgPriceDiffs) external;
 
-    function manualAssert(int128[] calldata openInterests) external view;
+    function manualAssert(bytes[] calldata _states) external view;
 
     function getPositionPnl(uint32 productId, bytes32 subaccount)
         external

@@ -13,9 +13,13 @@ import "./Endpoint.sol";
 import "./Verifier.sol";
 import "./BaseWithdrawPool.sol";
 import {DirectDepositV1} from "./DirectDepositV1.sol";
+import "./interfaces/IERC20Base.sol";
+import "./libraries/ERC20Helper.sol";
+import "./common/Constants.sol";
 
 contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     using MathSD21x18 for int128;
+    using ERC20Helper for IERC20Base;
 
     address internal deployer;
     SpotEngine internal spotEngine;
@@ -233,6 +237,23 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         );
         bytes memory txn = abi.encodePacked(
             uint8(IEndpoint.TransactionType.WithdrawInsurance),
+            abi.encode(_txn)
+        );
+        endpoint.submitSlowModeTransaction(txn);
+    }
+
+    function depositInsurance(uint128 amount) external onlyOwner {
+        IERC20Base quoteToken = IERC20Base(
+            spotEngine.getToken(QUOTE_PRODUCT_ID)
+        );
+
+        quoteToken.approve(address(endpoint), uint256(amount));
+
+        IEndpoint.DepositInsurance memory _txn = IEndpoint.DepositInsurance(
+            amount
+        );
+        bytes memory txn = abi.encodePacked(
+            uint8(IEndpoint.TransactionType.DepositInsurance),
             abi.encode(_txn)
         );
         endpoint.submitSlowModeTransaction(txn);

@@ -28,6 +28,9 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
     string internal constant LINK_SIGNER_SIGNATURE =
         "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
+    event AssignPubKey(uint256 i, uint256 x, uint256 y);
+    event DeletePubkey(uint256 index);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -74,6 +77,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         for (uint256 s = (1 << i); s < 256; s = (s + 1) | (1 << i)) {
             isAggregatePubkeyLatest[s] = false;
         }
+        emit AssignPubKey(i, x, y);
     }
 
     function deletePubkey(uint256 index) public onlyOwner {
@@ -81,6 +85,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
             nSigner -= 1;
             delete pubkeys[index];
         }
+        emit DeletePubkey(index);
     }
 
     function getPubkey(uint8 index) public view returns (Point memory) {
@@ -114,7 +119,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         return res;
     }
 
-    // determine if 2/3 of the signers are included in this signing mask
+    // determine if more than half of the signers are included in this signing mask
     // and if the keys are present
     function checkQuorum(uint8 signerBitmask) internal view returns (bool) {
         uint256 nSigned = 0;

@@ -17,7 +17,7 @@ contract MockERC20 is ERC20 {
     }
 
     /// @dev Unpermissioned minting for testing
-    function mint(address account, uint256 amount) external {
+    function mint(address account, uint256 amount) external virtual {
         require(amount < 100 ether, "MockERC20: amount too large");
         _mint(account, amount);
     }

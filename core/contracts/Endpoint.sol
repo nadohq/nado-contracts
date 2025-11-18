@@ -60,7 +60,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     int128 private slowModeFees;
 
     // invitee -> referralCode
-    mapping(address => string) public referralCodes;
+    mapping(address => string) public referralCodes; // deprecated
 
     mapping(uint32 => int128) internal priceX18;
     address internal offchainExchange;
@@ -237,14 +237,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         );
     }
 
-    function setReferralCode(address sender, string memory referralCode)
-        internal
-    {
-        if (bytes(referralCodes[sender]).length == 0) {
-            referralCodes[sender] = referralCode;
-        }
-    }
-
     function depositCollateral(
         bytes12 subaccountName,
         uint32 productId,
@@ -259,26 +251,11 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     }
 
     function depositCollateralWithReferral(
-        bytes12 subaccountName,
-        uint32 productId,
-        uint128 amount,
-        string calldata referralCode
-    ) external {
-        depositCollateralWithReferral(
-            bytes32(abi.encodePacked(msg.sender, subaccountName)),
-            productId,
-            amount,
-            referralCode
-        );
-    }
-
-    function depositCollateralWithReferral(
         bytes32 subaccount,
         uint32 productId,
         uint128 amount,
-        string memory referralCode
+        string memory
     ) public {
-        require(bytes(referralCode).length != 0);
         require(!RiskHelper.isIsolatedSubaccount(subaccount), ERR_UNAUTHORIZED);
 
         address sender = address(bytes20(subaccount));
@@ -287,15 +264,11 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         requireUnsanctioned(msg.sender);
         requireUnsanctioned(sender);
 
-        // no referral code allowed for remote deposit
-        setReferralCode(
-            sender,
-            sender == msg.sender ? referralCode : DEFAULT_REFERRAL_CODE
-        );
-
+        int256 minDepositAmount = MIN_DEPOSIT_AMOUNT;
         if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
-            clearinghouse.requireMinDeposit(productId, amount);
+            minDepositAmount = MIN_FIRST_DEPOSIT_AMOUNT;
         }
+        clearinghouse.requireMinDeposit(productId, amount, minDepositAmount);
 
         handleDepositTransfer(
             IERC20Base(spotEngine.getToken(productId)),
@@ -782,16 +755,17 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         bytes[] calldata transactions,
         uint256 gasLimit
     ) external {
-        uint256 gasUsed = gasleft();
+        uint256 initialGas = gasleft();
         validateSubmissionIdx(idx);
         for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
-            if (gasUsed - gasleft() > gasLimit) {
+            uint256 gasUsed = initialGas - gasleft();
+            if (gasUsed > gasLimit) {
                 verifier.revertGasInfo(i, gasUsed);
             }
         }
-        verifier.revertGasInfo(transactions.length, gasUsed - gasleft());
+        verifier.revertGasInfo(transactions.length, initialGas - gasleft());
     }
 
     function setInitialPrice(uint32 productId, int128 initialPriceX18)
