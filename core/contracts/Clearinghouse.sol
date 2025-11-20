@@ -677,11 +677,11 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         return spreads;
     }
 
-    function requireMinDeposit(
+    function checkMinDeposit(
         uint32 productId,
         uint128 amount,
         int256 minDepositAmount
-    ) external {
+    ) external returns (bool) {
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         uint8 decimals = _decimals(productId);
         require(decimals <= MAX_DECIMALS);
@@ -693,10 +693,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             priceX18 = IEndpoint(getEndpoint()).getPriceX18(productId);
         }
 
-        require(
-            priceX18.mul(amountRealized) >= minDepositAmount,
-            ERR_DEPOSIT_TOO_SMALL
-        );
+        return priceX18.mul(amountRealized) >= minDepositAmount;
     }
 
     function assertCode(bytes calldata transaction) external view virtual {

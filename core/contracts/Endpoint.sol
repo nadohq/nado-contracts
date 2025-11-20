@@ -242,8 +242,19 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         uint32 productId,
         uint128 amount
     ) external {
+        bytes32 subaccount = bytes32(
+            abi.encodePacked(msg.sender, subaccountName)
+        );
+        int256 minDepositAmount = MIN_DEPOSIT_AMOUNT;
+        if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
+            minDepositAmount = MIN_FIRST_DEPOSIT_AMOUNT;
+        }
+        require(
+            clearinghouse.checkMinDeposit(productId, amount, minDepositAmount),
+            ERR_DEPOSIT_TOO_SMALL
+        );
         depositCollateralWithReferral(
-            bytes32(abi.encodePacked(msg.sender, subaccountName)),
+            subaccount,
             productId,
             amount,
             DEFAULT_REFERRAL_CODE
@@ -268,7 +279,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
             minDepositAmount = MIN_FIRST_DEPOSIT_AMOUNT;
         }
-        clearinghouse.requireMinDeposit(productId, amount, minDepositAmount);
+        if (
+            !clearinghouse.checkMinDeposit(productId, amount, minDepositAmount)
+        ) {
+            // we cannot revert here, otherwise direct deposit could be blocked when there are
+            // multiple assets awaiting credit but one of them is below the minimum deposit amount.
+            // we can just skip the deposit and continue with the next asset.
+            return;
+        }
 
         handleDepositTransfer(
             IERC20Base(spotEngine.getToken(productId)),
@@ -614,10 +632,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             requireSubaccount(txn.matchOrders.maker.order.sender);
             MatchOrdersWithSigner memory txnWithSigner = MatchOrdersWithSigner({
                 matchOrders: txn.matchOrders,
-                takerLinkedSigner: getLinkedSigner(
+                takerLinkedSigner: getLinkedSignerOrNlpSigner(
                     txn.matchOrders.taker.order.sender
                 ),
-                makerLinkedSigner: getLinkedSigner(
+                makerLinkedSigner: getLinkedSignerOrNlpSigner(
                     txn.matchOrders.maker.order.sender
                 ),
                 takerAmountDelta: txn.takerAmountDelta
