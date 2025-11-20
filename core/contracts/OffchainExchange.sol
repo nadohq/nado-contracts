@@ -334,8 +334,7 @@ contract OffchainExchange is
         address signer = ECDSA.recover(digest, signature);
         return
             (signer != address(0)) &&
-            (subaccount == FEES_ACCOUNT ||
-                signer == address(uint160(bytes20(subaccount))) ||
+            (signer == address(uint160(bytes20(subaccount))) ||
                 signer == linkedSigner);
     }
 

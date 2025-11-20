@@ -441,7 +441,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         DirectDepositV1(directDepositV1).creditDeposit();
     }
 
-    function isDirectDepositV1Ready(address recipient) external returns (bool) {
+    function isDirectDepositV1Ready(address recipient, bool isFirstDeposit)
+        external
+        returns (bool)
+    {
         uint32[] memory productIds = spotEngine.getProductIds();
         for (uint256 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
@@ -457,7 +460,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             int128 oraclePriceX18 = spotEngine.getRisk(productId).priceX18;
             if (
                 oraclePriceX18.mul(int128(uint128(balance))) >=
-                MIN_DEPOSIT_AMOUNT
+                (isFirstDeposit ? MIN_FIRST_DEPOSIT_AMOUNT : MIN_DEPOSIT_AMOUNT)
             ) {
                 return true;
             }

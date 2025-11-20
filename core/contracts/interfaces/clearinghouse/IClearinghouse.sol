@@ -101,11 +101,11 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function getClearinghouseLiq() external view returns (address);
 
-    function requireMinDeposit(
+    function checkMinDeposit(
         uint32 productId,
         uint128 amount,
         int256 minDepositAmount
-    ) external;
+    ) external returns (bool);
 
     function assertCode(bytes calldata tx) external;
 
