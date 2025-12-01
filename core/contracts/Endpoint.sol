@@ -237,6 +237,19 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         );
     }
 
+    function isValidDepositAmount(
+        bytes32 subaccount,
+        uint32 productId,
+        uint128 amount
+    ) internal returns (bool) {
+        int256 minDepositAmount = MIN_DEPOSIT_AMOUNT;
+        if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
+            minDepositAmount = MIN_FIRST_DEPOSIT_AMOUNT;
+        }
+        return
+            clearinghouse.checkMinDeposit(productId, amount, minDepositAmount);
+    }
+
     function depositCollateral(
         bytes12 subaccountName,
         uint32 productId,
@@ -245,12 +258,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         bytes32 subaccount = bytes32(
             abi.encodePacked(msg.sender, subaccountName)
         );
-        int256 minDepositAmount = MIN_DEPOSIT_AMOUNT;
-        if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
-            minDepositAmount = MIN_FIRST_DEPOSIT_AMOUNT;
-        }
         require(
-            clearinghouse.checkMinDeposit(productId, amount, minDepositAmount),
+            isValidDepositAmount(subaccount, productId, amount),
             ERR_DEPOSIT_TOO_SMALL
         );
         depositCollateralWithReferral(
@@ -275,13 +284,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         requireUnsanctioned(msg.sender);
         requireUnsanctioned(sender);
 
-        int256 minDepositAmount = MIN_DEPOSIT_AMOUNT;
-        if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
-            minDepositAmount = MIN_FIRST_DEPOSIT_AMOUNT;
-        }
-        if (
-            !clearinghouse.checkMinDeposit(productId, amount, minDepositAmount)
-        ) {
+        if (!isValidDepositAmount(subaccount, productId, amount)) {
             // we cannot revert here, otherwise direct deposit could be blocked when there are
             // multiple assets awaiting credit but one of them is below the minimum deposit amount.
             // we can just skip the deposit and continue with the next asset.
@@ -383,6 +386,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (DepositInsurance)
             );
+            require(
+                txn.amount >= uint128(SLOW_MODE_FEE),
+                ERR_DEPOSIT_TOO_SMALL
+            );
             handleDepositTransfer(_getQuote(), sender, uint256(txn.amount));
         } else if (
             txType == TransactionType.WithdrawInsurance ||
@@ -462,6 +469,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     function executeSlowModeTransaction() external {
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
         _executeSlowModeTransaction(_slowModeConfig, false);
+        nSubmissions += 1;
         slowModeConfig = _slowModeConfig;
     }
 

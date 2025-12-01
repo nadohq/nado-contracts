@@ -426,6 +426,11 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         public
         returns (address payable)
     {
+        require(
+            getDirectDepositV1BytecodeHash() ==
+                0x7974df41bdca2be1539fa7d01f41277f0d728823b20230a18a31e40c707874e7,
+            "Invalid DirectDepositV1 bytecode hash"
+        );
         DirectDepositV1 directDepositV1 = new DirectDepositV1{
             salt: bytes32(uint256(1))
         }(address(endpoint), address(spotEngine), subaccount, wrappedNative);
@@ -468,7 +473,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         return false;
     }
 
-    function resetDirectDepositV1(bytes32 subaccount) external onlyOwner {
-        directDepositV1Address[subaccount] = payable(0);
+    function getDirectDepositV1BytecodeHash() public pure returns (bytes32) {
+        return keccak256(type(DirectDepositV1).creationCode);
     }
 }
