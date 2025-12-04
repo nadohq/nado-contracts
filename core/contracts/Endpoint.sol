@@ -566,7 +566,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                     signedTx.signature
                 );
                 requireSubaccount(signedTx.tx.sender);
-                chargeFee(signedTx.tx.sender, LIQUIDATION_FEE);
+                // No liquidation fee for finalization (productId == uint32.max) because:
+                // 1) The liquidator receives no profit from finalization
+                // 2) Finalization can only occur once per underwater subaccount, eliminating
+                //    sybil attack concerns that would otherwise require a fee deterrent.
+                if (signedTx.tx.productId != type(uint32).max) {
+                    chargeFee(signedTx.tx.sender, LIQUIDATION_FEE);
+                }
             }
             clearinghouse.liquidateSubaccount(signedTx.tx);
         } else if (txType == TransactionType.WithdrawCollateral) {
@@ -677,6 +683,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedBurnNlp)
             );
+            requireSubaccount(signedTx.tx.sender);
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(
                 signedTx.tx.sender,

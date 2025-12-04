@@ -518,28 +518,33 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         int128 burnFee = MathHelper.max(ONE, quoteAmount / 1000);
         quoteAmount = MathHelper.max(0, quoteAmount - burnFee);
 
-        if (quoteAmount == 0) {
-            return;
-        }
+        if (quoteAmount > 0) {
+            int128 rebalanceAmount = 0;
+            for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+                rebalanceAmount += nlpPoolRebalanceX18[i];
+                require(nlpPoolRebalanceX18[i] <= 0, ERR_INVALID_NLP_REBALANCE);
+            }
+            require(quoteAmount == -rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
 
-        int128 rebalanceAmount = 0;
-        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
-            rebalanceAmount += nlpPoolRebalanceX18[i];
-            require(nlpPoolRebalanceX18[i] <= 0, ERR_INVALID_NLP_REBALANCE);
-        }
-        require(quoteAmount == -rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
-
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
-        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
-            spotEngine.updateBalance(
-                QUOTE_PRODUCT_ID,
-                nlpPools[i].subaccount,
-                nlpPoolRebalanceX18[i]
-            );
+            spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
+            for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+                spotEngine.updateBalance(
+                    QUOTE_PRODUCT_ID,
+                    nlpPools[i].subaccount,
+                    nlpPoolRebalanceX18[i]
+                );
+            }
         }
 
         require(
             spotEngine.getBalance(NLP_PRODUCT_ID, txn.sender).amount >= 0,
+            ERR_SUBACCT_HEALTH
+        );
+        // Burning NLP can decrease health if the burn fee exceeds the health improvement
+        // from the withdrawal. This check prevents malicious actors from deliberately
+        // creating unhealthy subaccounts through NLP burns.
+        require(
+            getHealth(txn.sender, IProductEngine.HealthType.MAINTENANCE) >= 0,
             ERR_SUBACCT_HEALTH
         );
     }
