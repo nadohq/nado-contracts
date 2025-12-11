@@ -4,7 +4,7 @@
   "license": "UNLICENSED",
   "description": "EVM implementation of Nado",
   "scripts": {
-    "prepare": "husky install",
+    "prepare": "cd .. && husky install",
     "lint": "eslint './**/*.ts' --fix && prettier --write './**/*.{ts,sol}' --loglevel silent && solhint --fix 'contracts/**/*.sol'",
     "compile": "hardhat compile",
     "force-compile": "TS_NODE_TRANSPILE_ONLY=1 hardhat clean && TS_NODE_TRANSPILE_ONLY=1 hardhat compile"
