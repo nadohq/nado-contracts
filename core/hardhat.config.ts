@@ -20,11 +20,35 @@ import './tasks';
 
 const config: HardhatUserConfig = {
   solidity: {
-    version: '0.8.13',
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
+    compilers: [
+      {
+        version: '0.8.13',
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 800,
+          },
+        },
+      },
+    ],
+    overrides: {
+      'contracts/Endpoint.sol': {
+        version: '0.8.13',
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 50,
+          },
+        },
+      },
+      'contracts/Clearinghouse.sol': {
+        version: '0.8.13',
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 50,
+          },
+        },
       },
     },
   },
