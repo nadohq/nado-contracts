@@ -52,3 +52,7 @@ uint64 constant SLOW_MODE_TX_DELAY = 3 * 24 * 60 * 60; // 3 days
 uint64 constant NLP_LOCK_PERIOD = 4 * 24 * 60 * 60; // 4 days
 
 int128 constant INF = type(int128).max / 128;
+
+int128 constant MIN_SPREAD_LIQ_PENALTY_X18 = ONE / 400; // 0.25%
+
+int128 constant MIN_NON_SPREAD_LIQ_PENALTY_X18 = ONE / 200; // 0.5%

@@ -163,16 +163,9 @@ contract PerpEngine is PerpEngineState {
                 // actually socialize if still not enough
                 if (balance.vQuoteBalance < 0) {
                     // socialize across all other participants
-                    int128 fundingPerShare;
-                    if (!_isOpenInterestMultiplied()) {
-                        fundingPerShare =
-                            -balance.vQuoteBalance.div(state.openInterest) /
-                            2;
-                    } else {
-                        fundingPerShare = -balance.vQuoteBalance.div(
-                            state.openInterest
-                        );
-                    }
+                    int128 fundingPerShare = -balance.vQuoteBalance.div(
+                        state.openInterest
+                    );
                     state.cumulativeFundingLongX18 += fundingPerShare;
                     state.cumulativeFundingShortX18 -= fundingPerShare;
                     balance.vQuoteBalance = 0;

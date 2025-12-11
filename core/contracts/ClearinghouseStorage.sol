@@ -32,18 +32,19 @@ abstract contract ClearinghouseStorage {
     {
         RiskHelper.Risk memory risk = IProductEngine(productToEngine[productId])
             .getRisk(productId);
-        return (
-            risk.priceX18.mul(
-                ONE +
-                    (RiskHelper._getWeightX18(
-                        risk,
-                        amount,
-                        IProductEngine.HealthType.MAINTENANCE
-                    ) - ONE) /
-                    5
-            ),
-            risk.priceX18
-        );
+        int128 penaltyX18 = (RiskHelper._getWeightX18(
+            risk,
+            amount,
+            IProductEngine.HealthType.MAINTENANCE
+        ) - ONE) / 5;
+        if (penaltyX18.abs() < MIN_NON_SPREAD_LIQ_PENALTY_X18) {
+            if (penaltyX18 < 0) {
+                penaltyX18 = -MIN_NON_SPREAD_LIQ_PENALTY_X18;
+            } else {
+                penaltyX18 = MIN_NON_SPREAD_LIQ_PENALTY_X18;
+            }
+        }
+        return (risk.priceX18.mul(ONE + penaltyX18), risk.priceX18);
     }
 
     function getSpreadLiqPriceX18(
@@ -65,35 +66,42 @@ abstract contract ClearinghouseStorage {
             productToEngine[perpId]
         ).getRisk(perpId);
 
-        int128 spreadPenaltyX18;
+        int128 penaltyX18;
         if (amount >= 0) {
-            spreadPenaltyX18 =
+            penaltyX18 =
                 (ONE -
                     RiskHelper._getWeightX18(
                         perpRisk,
                         amount,
                         IProductEngine.HealthType.MAINTENANCE
                     )) /
-                25;
+                10;
         } else {
-            spreadPenaltyX18 =
+            penaltyX18 =
                 (RiskHelper._getWeightX18(
                     spotRisk,
                     amount,
                     IProductEngine.HealthType.MAINTENANCE
                 ) - ONE) /
-                25;
+                10;
+        }
+        if (penaltyX18.abs() < MIN_SPREAD_LIQ_PENALTY_X18) {
+            if (penaltyX18 < 0) {
+                penaltyX18 = -MIN_SPREAD_LIQ_PENALTY_X18;
+            } else {
+                penaltyX18 = MIN_SPREAD_LIQ_PENALTY_X18;
+            }
         }
 
         if (amount > 0) {
             return (
-                spotRisk.priceX18.mul(ONE - spreadPenaltyX18),
+                spotRisk.priceX18.mul(ONE - penaltyX18),
                 spotRisk.priceX18,
                 perpRisk.priceX18
             );
         } else {
             return (
-                spotRisk.priceX18.mul(ONE + spreadPenaltyX18),
+                spotRisk.priceX18.mul(ONE + penaltyX18),
                 spotRisk.priceX18,
                 perpRisk.priceX18
             );

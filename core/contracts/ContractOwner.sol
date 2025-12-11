@@ -12,7 +12,7 @@ import "./PerpEngine.sol";
 import "./Endpoint.sol";
 import "./Verifier.sol";
 import "./BaseWithdrawPool.sol";
-import {DirectDepositV1} from "./DirectDepositV1.sol";
+import {DirectDepositV1, IIERC20Base} from "./DirectDepositV1.sol";
 import "./interfaces/IERC20Base.sol";
 import "./libraries/ERC20Helper.sol";
 import "./common/Constants.sol";
@@ -475,5 +475,35 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
 
     function getDirectDepositV1BytecodeHash() public pure returns (bytes32) {
         return keccak256(type(DirectDepositV1).creationCode);
+    }
+
+    function withdrawFromDirectDepositV1(bytes32 subaccount, address token)
+        external
+        onlyOwner
+    {
+        address payable directDepositV1 = directDepositV1Address[subaccount];
+        require(
+            directDepositV1 != address(0),
+            "DirectDeposit contract not created."
+        );
+        if (token == address(0)) {
+            uint256 preBalance = address(this).balance;
+            DirectDepositV1(directDepositV1).withdrawNative();
+            uint256 postBalance = address(this).balance;
+            require(postBalance > preBalance, "Nothing to withdraw");
+            (bool success, ) = msg.sender.call{value: postBalance - preBalance}(
+                ""
+            );
+            require(success, "Failed to transfer native token to owner");
+        } else {
+            uint256 preBalance = IERC20Base(token).balanceOf(address(this));
+            DirectDepositV1(directDepositV1).withdraw(IIERC20Base(token));
+            uint256 postBalance = IERC20Base(token).balanceOf(address(this));
+            require(postBalance > preBalance, "Nothing to withdraw");
+            IERC20Base(token).safeTransfer(
+                msg.sender,
+                postBalance - preBalance
+            );
+        }
     }
 }
