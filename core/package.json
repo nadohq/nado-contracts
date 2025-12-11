@@ -4,10 +4,11 @@
   "license": "UNLICENSED",
   "description": "EVM implementation of Nado",
   "scripts": {
-    "prepare": "husky install",
+    "prepare": "cd .. && husky install",
     "lint": "eslint './**/*.ts' --fix && prettier --write './**/*.{ts,sol}' --loglevel silent && solhint --fix 'contracts/**/*.sol'",
     "compile": "hardhat compile",
-    "force-compile": "TS_NODE_TRANSPILE_ONLY=1 hardhat clean && TS_NODE_TRANSPILE_ONLY=1 hardhat compile"
+    "force-compile": "TS_NODE_TRANSPILE_ONLY=1 hardhat clean && TS_NODE_TRANSPILE_ONLY=1 hardhat compile",
+    "postinstall": "patch-package"
   },
   "engines": {
     "node": ">=16"
@@ -58,6 +59,7 @@
     "hardhat-gas-reporter": "^1.0.8",
     "husky": "^8.0.0",
     "lint-staged": "^13.0.3",
+    "patch-package": "^8.0.0",
     "prettier": "^2.6.2",
     "prettier-plugin-solidity": "^1.0.0-beta.19",
     "solhint": "^3.3.7",
