@@ -17,40 +17,17 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
     mapping(uint32 => mapping(bytes32 => Balance)) public balances;
 
     // we use this to track if we have migrated the state to the new format
+    // currently we have migrationFlag = 1
     uint128 public migrationFlag;
-
-    function _isOpenInterestMultiplied() internal view returns (bool) {
-        return migrationFlag > 0;
-    }
-
-    // TODO: remove this after migration is complete
-    function _migrateState() internal {
-        if (_isOpenInterestMultiplied()) {
-            return;
-        }
-        for (uint32 i = 0; i < productIds.length; i++) {
-            uint32 productId = productIds[i];
-            State memory state = states[productId];
-            state.openInterest *= 2;
-            states[productId] = state;
-        }
-        migrationFlag = 1;
-    }
 
     function _updateBalance(
         State memory state,
         Balance memory balance,
         int128 balanceDelta,
         int128 vQuoteDelta
-    ) internal view {
+    ) internal pure {
         // pre update
-        if (!_isOpenInterestMultiplied()) {
-            state.openInterest -= (balance.amount > 0)
-                ? balance.amount
-                : int128(0);
-        } else {
-            state.openInterest -= balance.amount.abs();
-        }
+        state.openInterest -= balance.amount.abs();
         int128 cumulativeFundingAmountX18 = (balance.amount > 0)
             ? state.cumulativeFundingLongX18
             : state.cumulativeFundingShortX18;
@@ -69,9 +46,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             state.openInterest += balance.amount;
             balance.lastCumulativeFundingX18 = state.cumulativeFundingLongX18;
         } else {
-            if (_isOpenInterestMultiplied()) {
-                state.openInterest -= balance.amount;
-            }
+            state.openInterest -= balance.amount;
             balance.lastCumulativeFundingX18 = state.cumulativeFundingShortX18;
         }
     }
@@ -129,7 +104,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         external
         onlyEndpoint
     {
-        _migrateState();
         int128 dtX18 = int128(dt).fromInt();
         for (uint32 i = 0; i < avgPriceDiffs.length; i++) {
             uint32 productId = productIds[i];

@@ -728,7 +728,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 signedTx.signature
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
+            if (
+                RiskHelper.isIsolatedSubaccount(signedTx.tx.recipient) ||
+                RiskHelper.isIsolatedSubaccount(signedTx.tx.sender)
+            ) {
+                chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE / 10);
+            } else {
+                chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
+            }
             clearinghouse.transferQuote(signedTx.tx);
         } else if (txType == TransactionType.AssertCode) {
             clearinghouse.assertCode(transaction);

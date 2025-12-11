@@ -129,18 +129,19 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
                 );
             }
 
-            int128 existingPenalty = (spotCoreRisk.longWeight +
+            // spreads have 5x higher leverage than the underlying products.
+            // but it's capped at 100x leverage at most.
+            int128 existingWeight = (spotCoreRisk.longWeight +
                 perpCoreRisk.longWeight) / 2;
-            int128 spreadPenalty;
-            if (spotCoreRisk.amount > 0) {
-                spreadPenalty = ONE - (ONE - perpCoreRisk.longWeight) / 5;
-            } else {
-                spreadPenalty = ONE - (ONE - spotCoreRisk.longWeight) / 5;
-            }
+            int128 spreadWeight = RiskHelper._getSpreadWeightX18(
+                perpCoreRisk,
+                spotCoreRisk,
+                healthType
+            );
 
             health += basisAmount
                 .mul(spotCoreRisk.price + perpCoreRisk.price)
-                .mul(spreadPenalty - existingPenalty);
+                .mul(spreadWeight - existingWeight);
             emit PriceQuery(_spotId);
             emit PriceQuery(_perpId);
         }

@@ -31,19 +31,6 @@ library RiskHelper {
         int128 priceX18;
     }
 
-    function _getSpreadHealthRebateAmount(
-        Risk memory perpRisk,
-        int128 basisAmount,
-        int128 priceSumX18,
-        IProductEngine.HealthType healthType
-    ) internal pure returns (int128) {
-        // 5x more leverage than the standard perp
-        // by refunding 4/5 of the health penalty
-        int128 rebateRateX18 = ((ONE - _getWeightX18(perpRisk, 1, healthType)) *
-            4) / 5;
-        return rebateRateX18.mul(priceSumX18).mul(basisAmount);
-    }
-
     function _getWeightX18(
         Risk memory risk,
         int128 amount,
@@ -65,6 +52,32 @@ library RiskHelper {
         }
 
         return weight;
+    }
+
+    function _getSpreadWeightX18(
+        IProductEngine.CoreRisk memory perpCoreRisk,
+        IProductEngine.CoreRisk memory spotCoreRisk,
+        IProductEngine.HealthType healthType
+    ) internal pure returns (int128) {
+        if (healthType == IProductEngine.HealthType.PNL) {
+            return ONE;
+        }
+        int128 spreadWeight;
+        if (spotCoreRisk.amount > 0) {
+            spreadWeight = ONE - (ONE - perpCoreRisk.longWeight) / 5;
+        } else {
+            spreadWeight = ONE - (ONE - spotCoreRisk.longWeight) / 5;
+        }
+        int128 maxSpreadWeight;
+        if (healthType == IProductEngine.HealthType.INITIAL) {
+            maxSpreadWeight = ONE - ONE / 100; // 0.99
+        } else {
+            maxSpreadWeight = ONE - (ONE * 6) / 1000; // 0.994
+        }
+        if (spreadWeight > maxSpreadWeight) {
+            spreadWeight = maxSpreadWeight;
+        }
+        return spreadWeight;
     }
 
     function isIsolatedSubaccount(bytes32 subaccount)
