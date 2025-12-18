@@ -444,7 +444,7 @@ contract OffchainExchange is
     function _feeAmount(
         uint32 productId,
         bytes32 subaccount,
-        MarketInfo memory market,
+        int128 minSize,
         int128 matchQuote,
         int128 alreadyMatched, // in USDC
         bool taker
@@ -458,7 +458,7 @@ contract OffchainExchange is
         if (taker) {
             // flat minimum fee
             if (alreadyMatched == 0) {
-                meteredQuote += market.minSize;
+                meteredQuote += minSize;
                 if (matchQuote < 0) {
                     meteredQuote = -meteredQuote;
                 }
@@ -468,7 +468,7 @@ contract OffchainExchange is
             // add to metered_quote
             // fee is only applied on [minSize, quote_amount)
             int128 feeApplied = MathHelper.abs(alreadyMatched + matchQuote) -
-                market.minSize;
+                minSize;
             feeApplied = MathHelper.min(feeApplied, matchQuote.abs());
             if (feeApplied > 0) {
                 if (matchQuote < 0) {
@@ -487,27 +487,28 @@ contract OffchainExchange is
             ? meteredQuote.mul(keepRateX18)
             : meteredQuote.div(keepRateX18);
         int128 fee = meteredQuote - newMeteredQuote;
-        market.collectedFees += fee;
         return (fee, matchQuote - fee);
     }
 
-    function feeAmount(
-        uint32 productId,
-        bytes32 subaccount,
-        MarketInfo memory market,
-        int128 matchQuote,
-        int128 alreadyMatched,
-        bool taker
-    ) internal virtual returns (int128, int128) {
+    function makerAccruesTakerFee(bytes32 subaccount, uint32 productId)
+        internal
+        view
+        returns (bool)
+    {
         return
-            _feeAmount(
-                productId,
-                subaccount,
-                market,
-                matchQuote,
-                alreadyMatched,
-                taker
-            );
+            subaccount != X_ACCOUNT &&
+            address(uint160(bytes20(subaccount))) == address(0) &&
+            getFeeFractionX18(subaccount, productId, false) <=
+            TAKER_FEE_ACCRUAL_RATE_X18;
+    }
+
+    function updateCollectedFees(
+        uint32, /* productId */
+        MarketInfo memory market,
+        bool, /* taker */
+        int128 fee
+    ) internal virtual {
+        market.collectedFees += fee;
     }
 
     struct OrdersInfo {
@@ -518,75 +519,10 @@ contract OffchainExchange is
         int128 makerAmount;
         int128 takerAmount;
         int128 takerFee;
-        int128 takerAmountDelta;
-        int128 takerQuoteDelta;
-    }
-
-    function _matchOrderOrder(
-        CallState memory callState,
-        MarketInfo memory market,
-        IEndpoint.Order memory taker,
-        IEndpoint.Order memory maker,
-        OrdersInfo memory ordersInfo
-    ) internal {
-        int128 takerAmountDelta;
-        int128 takerQuoteDelta;
-        // execution happens at the maker's price
-        if (taker.amount < 0) {
-            takerAmountDelta = MathHelper.max(taker.amount, -maker.amount);
-        } else if (taker.amount > 0) {
-            takerAmountDelta = MathHelper.min(taker.amount, -maker.amount);
-        } else {
-            return;
-        }
-
-        takerAmountDelta -= takerAmountDelta % market.sizeIncrement;
-
-        int128 makerQuoteDelta = takerAmountDelta.mul(maker.priceX18);
-
-        takerQuoteDelta = -makerQuoteDelta;
-
-        // apply the maker fee
         int128 makerFee;
-
-        (makerFee, makerQuoteDelta) = feeAmount(
-            callState.productId,
-            maker.sender,
-            market,
-            makerQuoteDelta,
-            0, // alreadyMatched doesn't matter for a maker order
-            false
-        );
-
-        taker.amount -= takerAmountDelta;
-        maker.amount += takerAmountDelta;
-
-        _updateBalances(
-            callState,
-            market.quoteId,
-            maker.sender,
-            -takerAmountDelta,
-            makerQuoteDelta
-        );
-
-        ordersInfo.takerAmountDelta = takerAmountDelta;
-        ordersInfo.takerQuoteDelta = takerQuoteDelta;
-
-        emit FillOrder(
-            callState.productId,
-            ordersInfo.makerDigest,
-            maker.sender,
-            maker.priceX18,
-            ordersInfo.makerAmount,
-            maker.expiration,
-            maker.nonce,
-            maker.appendix,
-            _isIsolated(maker.appendix),
-            false,
-            makerFee,
-            -takerAmountDelta,
-            makerQuoteDelta
-        );
+        int128 takerAmountDelta;
+        int128 takerQuoteDelta;
+        int128 makerQuoteDelta;
     }
 
     function isHealthy(
@@ -623,10 +559,12 @@ contract OffchainExchange is
             takerSender: taker.order.sender,
             makerSender: maker.order.sender,
             makerAmount: maker.order.amount,
-            takerAmount: 0,
+            takerAmount: taker.order.amount,
             takerFee: 0,
+            makerFee: 0,
             takerAmountDelta: 0,
-            takerQuoteDelta: 0
+            takerQuoteDelta: 0,
+            makerQuoteDelta: 0
         });
         if (digestToSubaccount[ordersInfo.takerDigest] != bytes32(0)) {
             taker.order.sender = digestToSubaccount[ordersInfo.takerDigest];
@@ -634,8 +572,6 @@ contract OffchainExchange is
         if (digestToSubaccount[ordersInfo.makerDigest] != bytes32(0)) {
             maker.order.sender = digestToSubaccount[ordersInfo.makerDigest];
         }
-
-        ordersInfo.takerAmount = taker.order.amount;
 
         require(
             _validateOrder(
@@ -701,22 +637,68 @@ contract OffchainExchange is
             );
         }
 
-        _matchOrderOrder(
-            callState,
-            market,
-            taker.order,
-            maker.order,
-            ordersInfo
+        // execution happens at the maker's price
+        if (taker.order.amount < 0) {
+            ordersInfo.takerAmountDelta = MathHelper.max(
+                taker.order.amount,
+                -maker.order.amount
+            );
+        } else if (taker.order.amount > 0) {
+            ordersInfo.takerAmountDelta = MathHelper.min(
+                taker.order.amount,
+                -maker.order.amount
+            );
+        }
+
+        ordersInfo.takerAmountDelta -=
+            ordersInfo.takerAmountDelta %
+            market.sizeIncrement;
+        ordersInfo.makerQuoteDelta = ordersInfo.takerAmountDelta.mul(
+            maker.order.priceX18
         );
+        ordersInfo.takerQuoteDelta = -ordersInfo.makerQuoteDelta;
+
+        taker.order.amount -= ordersInfo.takerAmountDelta;
+        maker.order.amount += ordersInfo.takerAmountDelta;
 
         // apply the taker fee
-        (ordersInfo.takerFee, ordersInfo.takerQuoteDelta) = feeAmount(
+        (ordersInfo.takerFee, ordersInfo.takerQuoteDelta) = _feeAmount(
             callState.productId,
             taker.order.sender,
-            market,
+            market.minSize,
             ordersInfo.takerQuoteDelta,
             -maker.order.priceX18.mul(filledAmounts[ordersInfo.takerDigest]),
             true
+        );
+
+        // apply the maker fee
+        if (makerAccruesTakerFee(maker.order.sender, callState.productId)) {
+            ordersInfo.makerFee = -ordersInfo.takerFee;
+            ordersInfo.makerQuoteDelta =
+                ordersInfo.makerQuoteDelta +
+                ordersInfo.takerFee;
+        } else {
+            (ordersInfo.makerFee, ordersInfo.makerQuoteDelta) = _feeAmount(
+                callState.productId,
+                maker.order.sender,
+                market.minSize,
+                ordersInfo.makerQuoteDelta,
+                0, // alreadyMatched doesn't matter for a maker order
+                false
+            );
+        }
+
+        updateCollectedFees(
+            callState.productId,
+            market,
+            true,
+            ordersInfo.takerFee
+        );
+        updateCollectedFees(
+            callState.productId,
+            market,
+            false,
+            ordersInfo.makerFee
         );
 
         _updateBalances(
@@ -725,6 +707,13 @@ contract OffchainExchange is
             taker.order.sender,
             ordersInfo.takerAmountDelta,
             ordersInfo.takerQuoteDelta
+        );
+        _updateBalances(
+            callState,
+            market.quoteId,
+            maker.order.sender,
+            -ordersInfo.takerAmountDelta,
+            ordersInfo.makerQuoteDelta
         );
 
         require(isHealthy(taker.order.sender), ERR_INVALID_TAKER);
@@ -736,30 +725,45 @@ contract OffchainExchange is
             filledAmounts[ordersInfo.takerDigest] += ordersInfo
                 .takerAmountDelta;
         }
-
         if (maker.order.sender != X_ACCOUNT) {
             filledAmounts[ordersInfo.makerDigest] -= ordersInfo
                 .takerAmountDelta;
         }
 
-        emitTakerEvent(callState.productId, taker, ordersInfo);
+        emitFillOrderEvents(callState, ordersInfo, maker.order, taker.order);
     }
 
-    function emitTakerEvent(
-        uint32 productId,
-        IEndpoint.SignedOrder memory taker,
-        OrdersInfo memory ordersInfo
+    function emitFillOrderEvents(
+        CallState memory callState,
+        OrdersInfo memory ordersInfo,
+        IEndpoint.Order memory maker,
+        IEndpoint.Order memory taker
     ) internal {
         emit FillOrder(
-            productId,
+            callState.productId,
+            ordersInfo.makerDigest,
+            ordersInfo.makerSender,
+            maker.priceX18,
+            ordersInfo.makerAmount,
+            maker.expiration,
+            maker.nonce,
+            maker.appendix,
+            _isIsolated(maker.appendix),
+            false,
+            ordersInfo.makerFee,
+            -ordersInfo.takerAmountDelta,
+            ordersInfo.makerQuoteDelta
+        );
+        emit FillOrder(
+            callState.productId,
             ordersInfo.takerDigest,
             ordersInfo.takerSender,
-            taker.order.priceX18,
+            taker.priceX18,
             ordersInfo.takerAmount,
-            taker.order.expiration,
-            taker.order.nonce,
-            taker.order.appendix,
-            _isIsolated(taker.order.appendix),
+            taker.expiration,
+            taker.nonce,
+            taker.appendix,
+            _isIsolated(taker.appendix),
             true,
             ordersInfo.takerFee,
             ordersInfo.takerAmountDelta,

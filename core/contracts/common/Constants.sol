@@ -56,3 +56,5 @@ int128 constant INF = type(int128).max / 128;
 int128 constant MIN_SPREAD_LIQ_PENALTY_X18 = ONE / 400; // 0.25%
 
 int128 constant MIN_NON_SPREAD_LIQ_PENALTY_X18 = ONE / 200; // 0.5%
+
+int128 constant TAKER_FEE_ACCRUAL_RATE_X18 = -300_000_000_000_000; // -3bps
