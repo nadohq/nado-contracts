@@ -975,15 +975,12 @@ contract OffchainExchange is
             digestToMargin[digest] = margin;
             spotEngine.updateBalance(
                 QUOTE_PRODUCT_ID,
-                txn.order.sender,
-                -margin
-            );
-            spotEngine.updateBalance(
-                QUOTE_PRODUCT_ID,
                 newIsolatedSubaccount,
                 margin
             );
         }
+
+        require(isHealthy(txn.order.sender), ERR_SUBACCT_HEALTH);
 
         return newIsolatedSubaccount;
     }
