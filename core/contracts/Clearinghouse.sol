@@ -516,7 +516,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         spotEngine.updateBalance(NLP_PRODUCT_ID, N_ACCOUNT, nlpAmount);
 
         int128 quoteAmount = nlpAmount.mul(oraclePriceX18);
-        int128 burnFee = MathHelper.max(ONE, quoteAmount / 1000);
+        int128 burnFee = quoteAmount / 1000;
         quoteAmount = MathHelper.max(0, quoteAmount - burnFee);
 
         if (quoteAmount > 0) {
