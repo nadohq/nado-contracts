@@ -1,6 +1,6 @@
 {
   "name": "nado-core",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "license": "UNLICENSED",
   "description": "EVM implementation of Nado",
   "scripts": {

@@ -32,6 +32,25 @@ interface IOffchainExchange {
 
     event FeeTierUpdate(address indexed user, uint32 feeTier);
 
+    event BuilderFeePayment(
+        bytes32 indexed subaccount,
+        uint32 indexed builder,
+        uint32 indexed productId,
+        bytes32 digest,
+        int128 builderFee,
+        int128 fee,
+        int128 quoteDelta
+    );
+
+    event BuilderUpdate(uint32 indexed builder, address indexed owner);
+
+    event ClaimBuilderFee(
+        uint32 indexed builder,
+        uint32 indexed productId,
+        bytes32 subaccount,
+        int128 amount
+    );
+
     struct FeeRates {
         int128 makerRateX18;
         int128 takerRateX18;
@@ -48,6 +67,13 @@ interface IOffchainExchange {
         int128 minSize;
         int128 sizeIncrement;
         int128 collectedFees;
+    }
+
+    struct Builder {
+        address owner;
+        uint32 defaultFeeTier;
+        int128 lowestFeeRate;
+        int128 highestFeeRate;
     }
 
     function initialize(address _clearinghouse, address _endpoint) external;
@@ -98,6 +124,10 @@ interface IOffchainExchange {
 
     function updateTierFeeRates(IEndpoint.UpdateTierFeeRates memory txn)
         external;
+
+    function updateBuilder(bytes calldata tx) external;
+
+    function claimBuilderFee(bytes32 sender, uint32 builderId) external;
 
     function assertProduct(bytes calldata tx) external;
 }

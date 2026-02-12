@@ -149,11 +149,22 @@ contract SpotEngine is SpotEngineState {
             NlpLockedBalanceQueue storage queue = nlpLockedBalanceQueues[
                 subaccount
             ];
-            queue.balances[queue.balanceCount] = NlpLockedBalance({
-                balance: Balance({amount: amountDelta}),
-                unlockedAt: getOracleTime() + NLP_LOCK_PERIOD
-            });
-            queue.balanceCount++;
+            if (
+                queue.balanceCount > 0 &&
+                queue.balances[queue.balanceCount - 1].unlockedAt ==
+                getOracleTime() + NLP_LOCK_PERIOD
+            ) {
+                queue
+                    .balances[queue.balanceCount - 1]
+                    .balance
+                    .amount += amountDelta;
+            } else {
+                queue.balances[queue.balanceCount] = NlpLockedBalance({
+                    balance: Balance({amount: amountDelta}),
+                    unlockedAt: getOracleTime() + NLP_LOCK_PERIOD
+                });
+                queue.balanceCount++;
+            }
         } else if (amountDelta < 0) {
             Balance memory balanceSum = nlpLockedBalanceQueues[subaccount]
                 .unlockedBalanceSum;

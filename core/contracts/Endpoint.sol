@@ -343,13 +343,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         address owner,
         uint128 balanceWeightX18
     ) private {
-        require(poolId < nlpPools.length, ERR_INVALID_NLP_POOL);
+        require(poolId < nlpPools.length);
         if (poolId == 0) {
-            require(owner == address(0), "cannot set owner for pool 0.");
-            require(
-                balanceWeightX18 > 0,
-                "cannot set 0 balance weight for pool 0."
-            );
+            require(owner == address(0));
+            require(balanceWeightX18 > 0);
         }
         nlpPools[poolId].owner = owner;
         nlpPools[poolId].balanceWeightX18 = balanceWeightX18;
@@ -357,7 +354,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     }
 
     function deleteNlpPool(uint64 poolId) private {
-        require(poolId > 0 && poolId < nlpPools.length, ERR_INVALID_NLP_POOL);
+        require(poolId > 0 && poolId < nlpPools.length);
         clearinghouse.clearNlpPoolPosition(nlpPools[poolId].subaccount);
         updateNlpPool(poolId, address(0), uint128(0));
     }
@@ -399,7 +396,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             txType == TransactionType.UpdateTierFeeRates ||
             txType == TransactionType.AddNlpPool ||
             txType == TransactionType.UpdateNlpPool ||
-            txType == TransactionType.DeleteNlpPool
+            txType == TransactionType.DeleteNlpPool ||
+            txType == TransactionType.UpdateBuilder
         ) {
             require(sender == owner());
         } else {
@@ -546,9 +544,42 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (DeleteNlpPool)
             );
             deleteNlpPool(txn.poolId);
+        } else if (txType == TransactionType.UpdateBuilder) {
+            IOffchainExchange(offchainExchange).updateBuilder(transaction);
+        } else if (txType == TransactionType.ClaimBuilderFee) {
+            ClaimBuilderFee memory txn = abi.decode(
+                transaction[1:],
+                (ClaimBuilderFee)
+            );
+            validateSender(txn.sender, sender);
+            requireSubaccount(txn.sender);
+            IOffchainExchange(offchainExchange).claimBuilderFee(
+                txn.sender,
+                txn.builderId
+            );
         } else {
             revert();
         }
+    }
+
+    function validateSignedTx(
+        bytes32 sender,
+        uint64 nonce,
+        bytes calldata transaction,
+        bytes memory signature
+    ) internal {
+        validateNonce(sender, nonce);
+        validateSignature(
+            sender,
+            _hashTypedDataV4(
+                computeDigest(
+                    TransactionType(uint8(transaction[0])),
+                    transaction[1:]
+                )
+            ),
+            signature
+        );
+        requireSubaccount(sender);
     }
 
     function processTransaction(bytes calldata transaction) internal {
@@ -559,13 +590,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedLiquidateSubaccount)
             );
             if (signedTx.tx.sender != N_ACCOUNT) {
-                validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-                validateSignature(
+                validateSignedTx(
                     signedTx.tx.sender,
-                    _hashTypedDataV4(computeDigest(txType, transaction[1:])),
+                    signedTx.tx.nonce,
+                    transaction,
                     signedTx.signature
                 );
-                requireSubaccount(signedTx.tx.sender);
                 // No liquidation fee for finalization (productId == uint32.max) because:
                 // 1) The liquidator receives no profit from finalization
                 // 2) Finalization can only occur once per underwater subaccount, eliminating
@@ -580,10 +610,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedWithdrawCollateral)
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(
+            validateSignedTx(
                 signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
+                signedTx.tx.nonce,
+                transaction,
                 signedTx.signature
             );
             chargeFee(
@@ -664,10 +694,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedMintNlp)
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(
+            validateSignedTx(
                 signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
+                signedTx.tx.nonce,
+                transaction,
                 signedTx.signature
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
@@ -683,11 +713,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedBurnNlp)
             );
-            requireSubaccount(signedTx.tx.sender);
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(
+            validateSignedTx(
                 signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
+                signedTx.tx.nonce,
+                transaction,
                 signedTx.signature
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
@@ -705,10 +734,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedLinkSigner)
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(
+            validateSignedTx(
                 signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
+                signedTx.tx.nonce,
+                transaction,
                 signedTx.signature
             );
             linkedSigners[signedTx.tx.sender] = address(
@@ -722,12 +751,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedTransferQuote)
             );
             _recordSubaccount(signedTx.tx.recipient);
-            validateSignature(
+            validateSignedTx(
                 signedTx.tx.sender,
-                _hashTypedDataV4(computeDigest(txType, transaction[1:])),
+                signedTx.tx.nonce,
+                transaction,
                 signedTx.signature
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             if (
                 RiskHelper.isIsolatedSubaccount(signedTx.tx.recipient) ||
                 RiskHelper.isIsolatedSubaccount(signedTx.tx.sender)

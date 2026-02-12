@@ -38,7 +38,9 @@ interface IEndpoint {
         UpdateNlpPool,
         DeleteNlpPool,
         AssertProduct,
-        CloseIsolatedSubaccount
+        CloseIsolatedSubaccount,
+        UpdateBuilder,
+        ClaimBuilderFee
     }
 
     enum LiquidationMode {
@@ -123,6 +125,19 @@ interface IEndpoint {
 
     struct DeleteNlpPool {
         uint64 poolId;
+    }
+
+    struct UpdateBuilder {
+        uint32 builderId;
+        address owner;
+        uint32 defaultFeeTier;
+        int128 lowestFeeRate;
+        int128 highestFeeRate;
+    }
+
+    struct ClaimBuilderFee {
+        bytes32 sender;
+        uint32 builderId;
     }
 
     struct LinkSigner {
