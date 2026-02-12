@@ -259,6 +259,33 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         endpoint.submitSlowModeTransaction(txn);
     }
 
+    function updateBuilders(
+        uint32[] calldata builderIds,
+        address[] calldata owners,
+        uint32[] calldata defaultFeeTiers,
+        int128[] calldata lowestFeeRates,
+        int128[] calldata highestFeeRates
+    ) external onlyOwner {
+        require(builderIds.length == owners.length, "invalid inputs");
+        require(builderIds.length == defaultFeeTiers.length, "invalid inputs");
+        require(builderIds.length == lowestFeeRates.length, "invalid inputs");
+        require(builderIds.length == highestFeeRates.length, "invalid inputs");
+        for (uint256 i = 0; i < builderIds.length; i++) {
+            IEndpoint.UpdateBuilder memory _txn = IEndpoint.UpdateBuilder(
+                builderIds[i],
+                owners[i],
+                defaultFeeTiers[i],
+                lowestFeeRates[i],
+                highestFeeRates[i]
+            );
+            bytes memory txn = abi.encodePacked(
+                uint8(IEndpoint.TransactionType.UpdateBuilder),
+                abi.encode(_txn)
+            );
+            endpoint.submitSlowModeTransaction(txn);
+        }
+    }
+
     function addNlpPool(address owner, uint128 balanceWeightX18)
         external
         onlyOwner
@@ -475,6 +502,23 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
 
     function getDirectDepositV1BytecodeHash() public pure returns (bytes32) {
         return keccak256(type(DirectDepositV1).creationCode);
+    }
+
+    function replaceUsdcEWithUsdc(bytes32 subaccount) external {
+        require(block.chainid == 57073, ERR_UNAUTHORIZED);
+        address payable directDepositV1 = directDepositV1Address[subaccount];
+        require(
+            directDepositV1 != address(0),
+            "DirectDeposit contract not created."
+        );
+        address usdcE = 0xF1815bd50389c46847f0Bda824eC8da914045D14;
+        address usdc = 0x2D270e6886d130D724215A266106e6832161EAEd;
+        uint256 balance = IERC20Base(usdcE).balanceOf(directDepositV1);
+        if (balance > 0) {
+            IERC20Base(usdc).transferFrom(msg.sender, directDepositV1, balance);
+            DirectDepositV1(directDepositV1).withdraw(IIERC20Base(usdcE));
+            IERC20Base(usdcE).safeTransfer(msg.sender, balance);
+        }
     }
 
     function withdrawFromDirectDepositV1(bytes32 subaccount, address token)

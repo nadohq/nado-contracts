@@ -15,6 +15,7 @@ import "./common/Errors.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IEndpoint.sol";
+import {Endpoint} from "./Endpoint.sol";
 
 contract OffchainExchange is
     IOffchainExchange,
@@ -58,6 +59,9 @@ contract OffchainExchange is
     mapping(bytes32 => int128) internal digestToMargin;
 
     uint128 internal nonDefaultFeeTierMask;
+
+    mapping(uint32 => Builder) internal builders;
+    mapping(uint32 => mapping(uint32 => int128)) internal collectedBuilderFee; // quoteId -> builder -> amount
 
     function getAllFeeTiers(address[] memory users)
         external
@@ -343,8 +347,8 @@ contract OffchainExchange is
     }
 
     /*
-        | value   | reserved | trigger | reduce only | order type| isolated | version |
-        | 64 bits | 50 bits  | 2 bits  | 1 bit       | 2 bits    | 1 bit    | 8 bits  |
+        | value   | builder | builder fee rate | reserved | trigger | reduce only | order type| isolated | version |
+        | 64 bits | 16 bits | 10 bits          | 24 bits  | 2 bits  | 1 bit       | 2 bits    | 1 bit    | 8 bits  |
     */
 
     function _isIsolated(uint128 appendix) internal pure returns (bool) {
@@ -377,8 +381,30 @@ contract OffchainExchange is
         return trigger >= 2;
     }
 
+    function _builderInfo(uint128 appendix)
+        internal
+        pure
+        returns (uint32 builderId, int128 builderFeeRate)
+    {
+        builderId = uint32((appendix >> 48) & ((1 << 16) - 1));
+        builderFeeRate = int128((appendix >> 38) & ((1 << 10) - 1)) * (10**13); // 0.1bps
+    }
+
     function orderVersion() public pure returns (uint128) {
         return 1;
+    }
+
+    function updateBuilder(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.UpdateBuilder memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.UpdateBuilder)
+        );
+        builders[txn.builderId] = Builder(
+            txn.owner,
+            txn.defaultFeeTier,
+            txn.lowestFeeRate,
+            txn.highestFeeRate
+        );
     }
 
     function _validateOrder(
@@ -405,6 +431,7 @@ contract OffchainExchange is
                 return false;
             }
         }
+
         int128 filledAmount = filledAmounts[orderDigest];
         order.amount -= filledAmount;
 
@@ -441,24 +468,63 @@ contract OffchainExchange is
             !_expired(order.expiration);
     }
 
-    function _feeAmount(
+    struct FeeInfo {
+        int128 feeRate;
+        uint32 builderId;
+        int128 builderFeeRate;
+    }
+
+    function getUserFeeRateWithBuilder(
+        bytes32 sender,
         uint32 productId,
-        bytes32 subaccount,
-        int128 minSize,
-        int128 matchQuote,
-        int128 alreadyMatched, // in USDC
+        uint128 appendix,
         bool taker
-    ) internal view returns (int128, int128) {
+    ) internal view returns (FeeInfo memory) {
+        (uint32 builderId, int128 builderFeeRate) = _builderInfo(appendix);
+        Builder memory builder;
+        if (builderId != 0) {
+            builder = builders[builderId];
+            if (
+                builder.owner == address(0) ||
+                builderFeeRate > builder.highestFeeRate ||
+                builderFeeRate < builder.lowestFeeRate
+            ) {
+                revert(ERR_INVALID_BUILDER);
+            }
+        } else if (builderFeeRate != 0) {
+            revert(ERR_INVALID_BUILDER);
+        }
+
+        uint32 feeTier = feeTiers[address(uint160(bytes20(sender)))];
+        if (feeTier < builder.defaultFeeTier) {
+            feeTier = builder.defaultFeeTier;
+        }
+        FeeRates memory userFeeRates = getTierFeeRateX18(feeTier, productId);
+        int128 feeRate = taker
+            ? userFeeRates.takerRateX18
+            : userFeeRates.makerRateX18;
+        return FeeInfo(feeRate, builderId, builderFeeRate);
+    }
+
+    function applyFee(
+        uint32 productId,
+        OrderInfo memory orderInfo,
+        MarketInfo memory market,
+        int128 alreadyMatched, // in quote
+        uint128 appendix,
+        bool taker
+    ) internal {
         // X account is passthrough for trading and incurs
         // no fees
-        if (subaccount == X_ACCOUNT) {
-            return (0, matchQuote);
+        if (orderInfo.sender == X_ACCOUNT) {
+            return;
         }
+        int128 matchQuote = orderInfo.quoteDelta;
         int128 meteredQuote = 0;
         if (taker) {
             // flat minimum fee
             if (alreadyMatched == 0) {
-                meteredQuote += minSize;
+                meteredQuote += market.minSize;
                 if (matchQuote < 0) {
                     meteredQuote = -meteredQuote;
                 }
@@ -468,7 +534,7 @@ contract OffchainExchange is
             // add to metered_quote
             // fee is only applied on [minSize, quote_amount)
             int128 feeApplied = MathHelper.abs(alreadyMatched + matchQuote) -
-                minSize;
+                market.minSize;
             feeApplied = MathHelper.min(feeApplied, matchQuote.abs());
             if (feeApplied > 0) {
                 if (matchQuote < 0) {
@@ -480,14 +546,44 @@ contract OffchainExchange is
             // for maker rebates things stay the same
             meteredQuote += matchQuote;
         }
+        FeeInfo memory feeInfo = getUserFeeRateWithBuilder(
+            orderInfo.sender,
+            productId,
+            appendix,
+            taker
+        );
 
-        int128 keepRateX18 = ONE -
-            getFeeFractionX18(subaccount, productId, taker);
+        int128 keepRateX18 = ONE - feeInfo.feeRate;
         int128 newMeteredQuote = (meteredQuote > 0)
             ? meteredQuote.mul(keepRateX18)
             : meteredQuote.div(keepRateX18);
-        int128 fee = meteredQuote - newMeteredQuote;
-        return (fee, matchQuote - fee);
+        orderInfo.fee = meteredQuote - newMeteredQuote;
+        orderInfo.builderFee = matchQuote.abs().mul(feeInfo.builderFeeRate);
+        orderInfo.quoteDelta =
+            orderInfo.quoteDelta -
+            orderInfo.fee -
+            orderInfo.builderFee;
+        if (orderInfo.builderFee > 0) {
+            collectedBuilderFee[market.quoteId][feeInfo.builderId] += orderInfo
+                .builderFee;
+            emitBuilderEvent(orderInfo, feeInfo.builderId, productId);
+        }
+    }
+
+    function emitBuilderEvent(
+        OrderInfo memory orderInfo,
+        uint32 builderId,
+        uint32 productId
+    ) internal {
+        emit BuilderFeePayment(
+            orderInfo.sender,
+            builderId,
+            productId,
+            orderInfo.digest,
+            orderInfo.builderFee,
+            orderInfo.fee,
+            orderInfo.quoteDelta
+        );
     }
 
     function makerAccruesTakerFee(bytes32 subaccount, uint32 productId)
@@ -498,7 +594,7 @@ contract OffchainExchange is
         return
             subaccount != X_ACCOUNT &&
             address(uint160(bytes20(subaccount))) == address(0) &&
-            getFeeFractionX18(subaccount, productId, false) <=
+            getTierFeeRateX18(feeTiers[address(0)], productId).makerRateX18 <=
             TAKER_FEE_ACCRUAL_RATE_X18;
     }
 
@@ -506,23 +602,24 @@ contract OffchainExchange is
         uint32, /* productId */
         MarketInfo memory market,
         bool, /* taker */
-        int128 fee
+        int128 fee,
+        int128 /* builder fee */
     ) internal virtual {
         market.collectedFees += fee;
     }
 
+    struct OrderInfo {
+        bytes32 digest;
+        bytes32 sender;
+        int128 amount;
+        int128 fee;
+        int128 builderFee;
+        int128 quoteDelta;
+        int128 amountDelta;
+    }
     struct OrdersInfo {
-        bytes32 takerDigest;
-        bytes32 makerDigest;
-        bytes32 takerSender;
-        bytes32 makerSender;
-        int128 makerAmount;
-        int128 takerAmount;
-        int128 takerFee;
-        int128 makerFee;
-        int128 takerAmountDelta;
-        int128 takerQuoteDelta;
-        int128 makerQuoteDelta;
+        OrderInfo taker;
+        OrderInfo maker;
     }
 
     function isHealthy(
@@ -553,24 +650,31 @@ contract OffchainExchange is
             ERR_INVALID_MAKER
         );
 
-        ordersInfo = OrdersInfo({
-            takerDigest: getDigest(callState.productId, taker.order),
-            makerDigest: getDigest(callState.productId, maker.order),
-            takerSender: taker.order.sender,
-            makerSender: maker.order.sender,
-            makerAmount: maker.order.amount,
-            takerAmount: taker.order.amount,
-            takerFee: 0,
-            makerFee: 0,
-            takerAmountDelta: 0,
-            takerQuoteDelta: 0,
-            makerQuoteDelta: 0
-        });
-        if (digestToSubaccount[ordersInfo.takerDigest] != bytes32(0)) {
-            taker.order.sender = digestToSubaccount[ordersInfo.takerDigest];
+        ordersInfo = OrdersInfo(
+            OrderInfo({
+                digest: getDigest(callState.productId, taker.order),
+                sender: taker.order.sender,
+                amount: taker.order.amount,
+                fee: 0,
+                builderFee: 0,
+                quoteDelta: 0,
+                amountDelta: 0
+            }),
+            OrderInfo({
+                digest: getDigest(callState.productId, maker.order),
+                sender: maker.order.sender,
+                amount: maker.order.amount,
+                fee: 0,
+                builderFee: 0,
+                quoteDelta: 0,
+                amountDelta: 0
+            })
+        );
+        if (digestToSubaccount[ordersInfo.taker.digest] != bytes32(0)) {
+            taker.order.sender = digestToSubaccount[ordersInfo.taker.digest];
         }
-        if (digestToSubaccount[ordersInfo.makerDigest] != bytes32(0)) {
-            maker.order.sender = digestToSubaccount[ordersInfo.makerDigest];
+        if (digestToSubaccount[ordersInfo.maker.digest] != bytes32(0)) {
+            maker.order.sender = digestToSubaccount[ordersInfo.maker.digest];
         }
 
         require(
@@ -578,7 +682,7 @@ contract OffchainExchange is
                 callState,
                 market,
                 taker,
-                ordersInfo.takerDigest,
+                ordersInfo.taker.digest,
                 true,
                 txn.takerLinkedSigner
             ),
@@ -589,7 +693,7 @@ contract OffchainExchange is
                 callState,
                 market,
                 maker,
-                ordersInfo.makerDigest,
+                ordersInfo.maker.digest,
                 false,
                 txn.makerLinkedSigner
             ),
@@ -639,51 +743,52 @@ contract OffchainExchange is
 
         // execution happens at the maker's price
         if (taker.order.amount < 0) {
-            ordersInfo.takerAmountDelta = MathHelper.max(
+            ordersInfo.taker.amountDelta = MathHelper.max(
                 taker.order.amount,
                 -maker.order.amount
             );
         } else if (taker.order.amount > 0) {
-            ordersInfo.takerAmountDelta = MathHelper.min(
+            ordersInfo.taker.amountDelta = MathHelper.min(
                 taker.order.amount,
                 -maker.order.amount
             );
         }
 
-        ordersInfo.takerAmountDelta -=
-            ordersInfo.takerAmountDelta %
+        ordersInfo.taker.amountDelta -=
+            ordersInfo.taker.amountDelta %
             market.sizeIncrement;
-        ordersInfo.makerQuoteDelta = ordersInfo.takerAmountDelta.mul(
+        ordersInfo.maker.quoteDelta = ordersInfo.taker.amountDelta.mul(
             maker.order.priceX18
         );
-        ordersInfo.takerQuoteDelta = -ordersInfo.makerQuoteDelta;
+        ordersInfo.taker.quoteDelta = -ordersInfo.maker.quoteDelta;
+        ordersInfo.maker.amountDelta = -ordersInfo.taker.amountDelta;
 
-        taker.order.amount -= ordersInfo.takerAmountDelta;
-        maker.order.amount += ordersInfo.takerAmountDelta;
+        taker.order.amount -= ordersInfo.taker.amountDelta;
+        maker.order.amount -= ordersInfo.maker.amountDelta;
 
         // apply the taker fee
-        (ordersInfo.takerFee, ordersInfo.takerQuoteDelta) = _feeAmount(
+        applyFee(
             callState.productId,
-            taker.order.sender,
-            market.minSize,
-            ordersInfo.takerQuoteDelta,
-            -maker.order.priceX18.mul(filledAmounts[ordersInfo.takerDigest]),
+            ordersInfo.taker,
+            market,
+            -maker.order.priceX18.mul(filledAmounts[ordersInfo.taker.digest]),
+            taker.order.appendix,
             true
         );
 
         // apply the maker fee
         if (makerAccruesTakerFee(maker.order.sender, callState.productId)) {
-            ordersInfo.makerFee = -ordersInfo.takerFee;
-            ordersInfo.makerQuoteDelta =
-                ordersInfo.makerQuoteDelta +
-                ordersInfo.takerFee;
+            ordersInfo.maker.fee = -ordersInfo.taker.fee;
+            ordersInfo.maker.quoteDelta =
+                ordersInfo.maker.quoteDelta +
+                ordersInfo.taker.fee;
         } else {
-            (ordersInfo.makerFee, ordersInfo.makerQuoteDelta) = _feeAmount(
+            applyFee(
                 callState.productId,
-                maker.order.sender,
-                market.minSize,
-                ordersInfo.makerQuoteDelta,
+                ordersInfo.maker,
+                market,
                 0, // alreadyMatched doesn't matter for a maker order
+                maker.order.appendix,
                 false
             );
         }
@@ -692,28 +797,30 @@ contract OffchainExchange is
             callState.productId,
             market,
             true,
-            ordersInfo.takerFee
+            ordersInfo.taker.fee,
+            ordersInfo.taker.builderFee
         );
         updateCollectedFees(
             callState.productId,
             market,
             false,
-            ordersInfo.makerFee
+            ordersInfo.maker.fee,
+            ordersInfo.maker.builderFee
         );
 
         _updateBalances(
             callState,
             market.quoteId,
             taker.order.sender,
-            ordersInfo.takerAmountDelta,
-            ordersInfo.takerQuoteDelta
+            ordersInfo.taker.amountDelta,
+            ordersInfo.taker.quoteDelta
         );
         _updateBalances(
             callState,
             market.quoteId,
             maker.order.sender,
-            -ordersInfo.takerAmountDelta,
-            ordersInfo.makerQuoteDelta
+            ordersInfo.maker.amountDelta,
+            ordersInfo.maker.quoteDelta
         );
 
         require(isHealthy(taker.order.sender), ERR_INVALID_TAKER);
@@ -722,53 +829,63 @@ contract OffchainExchange is
         marketInfo[callState.productId].collectedFees = market.collectedFees;
 
         if (taker.order.sender != X_ACCOUNT) {
-            filledAmounts[ordersInfo.takerDigest] += ordersInfo
-                .takerAmountDelta;
+            filledAmounts[ordersInfo.taker.digest] += ordersInfo
+                .taker
+                .amountDelta;
         }
         if (maker.order.sender != X_ACCOUNT) {
-            filledAmounts[ordersInfo.makerDigest] -= ordersInfo
-                .takerAmountDelta;
+            filledAmounts[ordersInfo.maker.digest] += ordersInfo
+                .maker
+                .amountDelta;
         }
 
-        emitFillOrderEvents(callState, ordersInfo, maker.order, taker.order);
+        emitFillOrderEvent(callState, ordersInfo.maker, maker.order, false);
+        emitFillOrderEvent(callState, ordersInfo.taker, taker.order, true);
     }
 
-    function emitFillOrderEvents(
+    function emitFillOrderEvent(
         CallState memory callState,
-        OrdersInfo memory ordersInfo,
-        IEndpoint.Order memory maker,
-        IEndpoint.Order memory taker
+        OrderInfo memory orderInfo,
+        IEndpoint.Order memory order,
+        bool taker
     ) internal {
         emit FillOrder(
             callState.productId,
-            ordersInfo.makerDigest,
-            ordersInfo.makerSender,
-            maker.priceX18,
-            ordersInfo.makerAmount,
-            maker.expiration,
-            maker.nonce,
-            maker.appendix,
-            _isIsolated(maker.appendix),
-            false,
-            ordersInfo.makerFee,
-            -ordersInfo.takerAmountDelta,
-            ordersInfo.makerQuoteDelta
+            orderInfo.digest,
+            orderInfo.sender,
+            order.priceX18,
+            orderInfo.amount,
+            order.expiration,
+            order.nonce,
+            order.appendix,
+            _isIsolated(order.appendix),
+            taker,
+            orderInfo.fee,
+            orderInfo.amountDelta,
+            orderInfo.quoteDelta
         );
-        emit FillOrder(
-            callState.productId,
-            ordersInfo.takerDigest,
-            ordersInfo.takerSender,
-            taker.priceX18,
-            ordersInfo.takerAmount,
-            taker.expiration,
-            taker.nonce,
-            taker.appendix,
-            _isIsolated(taker.appendix),
-            true,
-            ordersInfo.takerFee,
-            ordersInfo.takerAmountDelta,
-            ordersInfo.takerQuoteDelta
+    }
+
+    function claimBuilderFee(bytes32 sender, uint32 builderId)
+        external
+        onlyEndpoint
+    {
+        require(!RiskHelper.isIsolatedSubaccount(sender), ERR_UNAUTHORIZED);
+        require(
+            builders[builderId].owner == address(uint160(bytes20(sender))),
+            ERR_UNAUTHORIZED
         );
+        uint32[] memory productIds = spotEngine.getProductIds();
+        for (uint32 i = 0; i < productIds.length; i++) {
+            uint32 productId = productIds[i];
+            int128 collectedFee = collectedBuilderFee[productId][builderId];
+            if (collectedFee == 0) {
+                continue;
+            }
+            emit ClaimBuilderFee(builderId, productId, sender, collectedFee);
+            spotEngine.updateBalance(productId, sender, collectedFee);
+            collectedBuilderFee[productId][builderId] = 0;
+        }
     }
 
     function dumpFees() external onlyEndpoint {
@@ -813,24 +930,6 @@ contract OffchainExchange is
         }
     }
 
-    function getFeeFractionX18(
-        bytes32 subaccount,
-        uint32 productId,
-        bool taker
-    ) public view returns (int128) {
-        FeeRates memory userFeeRates = _getUserFeeRates(subaccount, productId);
-        return taker ? userFeeRates.takerRateX18 : userFeeRates.makerRateX18;
-    }
-
-    function getFeeRatesX18(bytes32 subaccount, uint32 productId)
-        public
-        view
-        returns (int128, int128)
-    {
-        FeeRates memory userFeeRates = _getUserFeeRates(subaccount, productId);
-        return (userFeeRates.takerRateX18, userFeeRates.makerRateX18);
-    }
-
     function getTierFeeRateX18(uint32 tier, uint32 productId)
         public
         view
@@ -846,16 +945,8 @@ contract OffchainExchange is
             });
     }
 
-    function _getUserFeeRates(bytes32 subaccount, uint32 productId)
-        private
-        view
-        returns (FeeRates memory)
-    {
-        if (RiskHelper.isIsolatedSubaccount(subaccount)) {
-            subaccount = parentSubaccounts[subaccount];
-        }
-        uint32 feeTier = feeTiers[address(uint160(bytes20(subaccount)))];
-        return getTierFeeRateX18(feeTier, productId);
+    function getUserFeeTier(address sender) external view returns (uint32) {
+        return feeTiers[sender];
     }
 
     function updateFeeTier(address user, uint32 newTier) external {
@@ -1033,6 +1124,22 @@ contract OffchainExchange is
         returns (bytes32)
     {
         return parentSubaccounts[subaccount];
+    }
+
+    function getClaimableBuilderFee(uint32 quoteId, uint32 builderId)
+        external
+        view
+        returns (int128)
+    {
+        return collectedBuilderFee[quoteId][builderId];
+    }
+
+    function getBuilder(uint32 builderId)
+        external
+        view
+        returns (Builder memory)
+    {
+        return builders[builderId];
     }
 
     function assertProduct(bytes calldata transaction) external virtual {
