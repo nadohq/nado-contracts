@@ -124,6 +124,22 @@ contract ClearinghouseLiq is
                     basisAmount = MathHelper.max(spotAmount, -perpAmount);
                 }
             }
+            if (basisAmount < 0) {
+                (int128 liquidationPrice, , ) = getSpreadLiqPriceX18(
+                    spotId,
+                    perpId,
+                    basisAmount
+                );
+                ISpotEngine.Balance memory quoteBalance = spotEngine.getBalance(
+                    QUOTE_PRODUCT_ID,
+                    txn.liquidatee
+                );
+                int128 maxBuy = (quoteBalance.amount + insurance).div(
+                    liquidationPrice
+                );
+                maxBuy = MathHelper.max(maxBuy + 1, 0);
+                basisAmount = MathHelper.max(-maxBuy, basisAmount);
+            }
             basisAmount -= basisAmount % perpSizeIncrement;
             spotAmount -= basisAmount;
             perpAmount += basisAmount;
@@ -139,24 +155,7 @@ contract ClearinghouseLiq is
                 spotEngine.getRisk(spotId).longWeightInitialX18 != 0,
                 ERR_INVALID_PRODUCT
             );
-            if (basisAmount >= 0) {
-                maxLiquidatable = basisAmount;
-            } else {
-                (int128 liquidationPrice, , ) = getSpreadLiqPriceX18(
-                    spotId,
-                    perpId,
-                    basisAmount
-                );
-                ISpotEngine.Balance memory quoteBalance = spotEngine.getBalance(
-                    QUOTE_PRODUCT_ID,
-                    txn.liquidatee
-                );
-                int128 maxBuy = (quoteBalance.amount + insurance).div(
-                    liquidationPrice
-                );
-                maxBuy = MathHelper.max(maxBuy + 1, 0);
-                maxLiquidatable = MathHelper.max(-maxBuy, basisAmount);
-            }
+            maxLiquidatable = basisAmount;
         } else if (engine == address(spotEngine)) {
             require(
                 spotEngine.getRisk(spotId).longWeightInitialX18 != 0,
