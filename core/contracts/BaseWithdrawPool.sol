@@ -61,6 +61,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         IERC20Base token = getToken(signedTx.tx.productId);
 
         address sendTo = address(uint160(bytes20(signedTx.tx.sender)));
+        require(sendTo == msg.sender, ERR_UNAUTHORIZED);
         uint128 transferAmount = signedTx.tx.amount;
 
         require(transferAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
