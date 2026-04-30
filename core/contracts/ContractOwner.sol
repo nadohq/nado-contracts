@@ -14,6 +14,7 @@ import "./Verifier.sol";
 import "./BaseWithdrawPool.sol";
 import {DirectDepositV1, IIERC20Base} from "./DirectDepositV1.sol";
 import "./interfaces/IERC20Base.sol";
+import "./interfaces/IERC4626Base.sol";
 import "./libraries/ERC20Helper.sol";
 import "./common/Constants.sol";
 
@@ -470,6 +471,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         if (directDepositV1 == address(0)) {
             directDepositV1 = createDirectDepositV1(subaccount);
         }
+        _wrapDirectDepositVaultAssets(directDepositV1);
         DirectDepositV1(directDepositV1).creditDeposit();
     }
 
@@ -488,6 +490,15 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             if (tokenAddr == wrappedNative) {
                 balance += recipient.balance;
             }
+            address assetTokenAddr = _getVaultAsset(tokenAddr);
+            if (assetTokenAddr != address(0)) {
+                uint256 assetBalance = IERC20Base(assetTokenAddr).balanceOf(
+                    recipient
+                );
+                if (assetBalance != 0) {
+                    balance += _previewVaultDeposit(tokenAddr, assetBalance);
+                }
+            }
             balance *= 10**(18 - token.decimals());
             int128 oraclePriceX18 = spotEngine.getRisk(productId).priceX18;
             if (
@@ -502,6 +513,69 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
 
     function getDirectDepositV1BytecodeHash() public pure returns (bytes32) {
         return keccak256(type(DirectDepositV1).creationCode);
+    }
+
+    function _wrapDirectDepositVaultAssets(address payable directDepositV1)
+        internal
+    {
+        uint32[] memory productIds = spotEngine.getProductIds();
+        for (uint256 i = 0; i < productIds.length; i++) {
+            address tokenAddr = spotEngine.getToken(productIds[i]);
+            require(tokenAddr != address(0), "Invalid productId.");
+
+            address assetTokenAddr = _getVaultAsset(tokenAddr);
+            if (assetTokenAddr == address(0)) {
+                continue;
+            }
+
+            uint256 assetBalance = IERC20Base(assetTokenAddr).balanceOf(
+                directDepositV1
+            );
+            if (assetBalance == 0) {
+                continue;
+            }
+
+            DirectDepositV1(directDepositV1).withdraw(
+                IIERC20Base(assetTokenAddr)
+            );
+            IERC20Base assetToken = IERC20Base(assetTokenAddr);
+            assetToken.approve(tokenAddr, 0);
+            assetToken.approve(tokenAddr, assetBalance);
+            IERC4626Base(tokenAddr).deposit(assetBalance, directDepositV1);
+        }
+    }
+
+    function _getVaultAsset(address tokenAddr)
+        internal
+        view
+        returns (address assetTokenAddr)
+    {
+        try IERC4626Base(tokenAddr).asset() returns (
+            address maybeAssetTokenAddr
+        ) {
+            if (
+                maybeAssetTokenAddr != address(0) &&
+                maybeAssetTokenAddr != tokenAddr
+            ) {
+                assetTokenAddr = maybeAssetTokenAddr;
+            }
+        } catch {
+            assetTokenAddr = address(0);
+        }
+    }
+
+    function _previewVaultDeposit(address tokenAddr, uint256 assetBalance)
+        internal
+        view
+        returns (uint256 wrappedBalance)
+    {
+        try IERC4626Base(tokenAddr).previewDeposit(assetBalance) returns (
+            uint256 maybeWrappedBalance
+        ) {
+            wrappedBalance = maybeWrappedBalance;
+        } catch {
+            wrappedBalance = 0;
+        }
     }
 
     function replaceUsdcEWithUsdc(bytes32 subaccount) external {
