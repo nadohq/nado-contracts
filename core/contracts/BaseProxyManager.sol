@@ -15,11 +15,19 @@ interface IIClearinghouse {
     function upgradeClearinghouseLiq(address _clearinghouseLiq) external;
 }
 
+// Sadly we can't use the name `IEndpoint` and `IIEndpoint` here.
+interface IIEndpointUpgradeable {
+    function getEndpointTx() external view returns (address);
+
+    function upgradeEndpointTx(address _endpointTx) external;
+}
+
 // ProxyAdmin cannot access to any functions of the implementation of a proxy,
 // so we have to create a helper contract to help us visit impl functions.
 contract ProxyManagerHelper {
     address internal proxyManager;
     address internal clearinghouse;
+    address internal endpoint;
 
     modifier onlyOwner() {
         require(
@@ -37,6 +45,10 @@ contract ProxyManagerHelper {
         clearinghouse = _clearinghouse;
     }
 
+    function registerEndpoint(address _endpoint) external onlyOwner {
+        endpoint = _endpoint;
+    }
+
     function getClearinghouseLiq() external view returns (address) {
         return IIClearinghouse(clearinghouse).getClearinghouseLiq();
     }
@@ -49,11 +61,21 @@ contract ProxyManagerHelper {
             clearinghouseLiq
         );
     }
+
+    function getEndpointTx() external view returns (address) {
+        return IIEndpointUpgradeable(endpoint).getEndpointTx();
+    }
+
+    function upgradeEndpointTx(address _endpointTx) external onlyOwner {
+        IIEndpointUpgradeable(endpoint).upgradeEndpointTx(_endpointTx);
+    }
 }
 
 abstract contract BaseProxyManager is OwnableUpgradeable {
     string internal constant CLEARINGHOUSE = "Clearinghouse";
     string internal constant CLEARINGHOUSE_LIQ = "ClearinghouseLiq";
+    string internal constant ENDPOINT = "Endpoint";
+    string internal constant ENDPOINT_TX = "EndpointTx";
 
     address public submitter;
     ProxyManagerHelper internal proxyManagerHelper;
@@ -86,6 +108,40 @@ abstract contract BaseProxyManager is OwnableUpgradeable {
         __Ownable_init();
         submitter = msg.sender;
         proxyManagerHelper = new ProxyManagerHelper();
+    }
+
+    // tmp function
+    function refreshProxyManagerHelper() external onlyOwner {
+        ProxyManagerHelper newHelper = new ProxyManagerHelper();
+        if (_isClearinghouseRegistered()) {
+            newHelper.registerClearinghouse(proxies[CLEARINGHOUSE]);
+        }
+        if (_isEndpointRegistered()) {
+            newHelper.registerEndpoint(proxies[ENDPOINT]);
+        }
+        proxyManagerHelper = newHelper;
+    }
+
+    // reinitializer to version 2
+    function bootstrapEndpointTx(address _endpointTx, bytes32 expectedCodeHash)
+        external
+        onlyOwner
+        reinitializer(2)
+    {
+        require(_isEndpointRegistered(), "Endpoint not registered");
+        require(_endpointTx != address(0), "EndpointTx is zero");
+        require(_endpointTx.code.length > 0, "EndpointTx has no code");
+
+        bytes32 actualCodeHash = _getCodeHash(_endpointTx.code);
+        require(actualCodeHash == expectedCodeHash, "EndpointTx hash mismatch");
+
+        require(_getEndpointTxImpl() == address(0), "EndpointTx already set");
+
+        proxyManagerHelper.upgradeEndpointTx(_endpointTx);
+
+        pendingImpls[ENDPOINT_TX] = _endpointTx;
+        pendingHashes[ENDPOINT_TX] = actualCodeHash;
+        codeHashes[ENDPOINT_TX] = actualCodeHash;
     }
 
     function _getSlice(
@@ -134,6 +190,8 @@ abstract contract BaseProxyManager is OwnableUpgradeable {
         for (uint32 i = 0; i < newImpls.length; i++) {
             if (_isEqual(newImpls[i].name, CLEARINGHOUSE_LIQ)) {
                 _migrateClearinghouseLiq(newImpls[i]);
+            } else if (_isEqual(newImpls[i].name, ENDPOINT_TX)) {
+                _migrateEndpointTx(newImpls[i]);
             } else {
                 _migrateRegularProxy(newImpls[i]);
             }
@@ -171,6 +229,11 @@ abstract contract BaseProxyManager is OwnableUpgradeable {
                 return true;
             }
         }
+        if (_isEndpointRegistered()) {
+            if (_getEndpointTxImpl() != pendingImpls[ENDPOINT_TX]) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -192,6 +255,10 @@ abstract contract BaseProxyManager is OwnableUpgradeable {
 
     function _getClearinghouseLiqImpl() internal view returns (address) {
         return proxyManagerHelper.getClearinghouseLiq();
+    }
+
+    function _getEndpointTxImpl() internal view returns (address) {
+        return proxyManagerHelper.getEndpointTx();
     }
 
     function _validateImpl(address currentImpl, NewImpl calldata newImpl)
@@ -227,7 +294,21 @@ abstract contract BaseProxyManager is OwnableUpgradeable {
         proxyManagerHelper.upgradeClearinghouseLiq(newImpl.impl);
     }
 
+    function _migrateEndpointTx(NewImpl calldata newImpl) internal {
+        require(
+            _isEqual(newImpl.name, ENDPOINT_TX),
+            "invalid new impl provided."
+        );
+        require(_isEndpointRegistered(), "Endpoint hasn't been registered.");
+        _validateImpl(_getEndpointTxImpl(), newImpl);
+        proxyManagerHelper.upgradeEndpointTx(newImpl.impl);
+    }
+
     function _isClearinghouseRegistered() internal view returns (bool) {
         return proxies[CLEARINGHOUSE] != address(0);
+    }
+
+    function _isEndpointRegistered() internal view returns (bool) {
+        return proxies[ENDPOINT] != address(0);
     }
 }

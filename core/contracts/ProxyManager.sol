@@ -32,6 +32,8 @@ contract ProxyManager is BaseProxyManager {
         address impl;
         if (_isEqual(name, CLEARINGHOUSE_LIQ)) {
             impl = _getClearinghouseLiqImpl();
+        } else if (_isEqual(name, ENDPOINT_TX)) {
+            impl = _getEndpointTxImpl();
         } else {
             impl = _getImpl(proxy);
         }
@@ -59,6 +61,12 @@ contract ProxyManager is BaseProxyManager {
                 clearinghouseLiq.code
             );
             codeHashes[CLEARINGHOUSE_LIQ] = pendingHashes[CLEARINGHOUSE_LIQ];
+        } else if (_isEqual(name, ENDPOINT)) {
+            proxyManagerHelper.registerEndpoint(proxy);
+            address endpointTx = _getEndpointTxImpl();
+            pendingImpls[ENDPOINT_TX] = endpointTx;
+            pendingHashes[ENDPOINT_TX] = _getCodeHash(endpointTx.code);
+            codeHashes[ENDPOINT_TX] = pendingHashes[ENDPOINT_TX];
         }
     }
 }

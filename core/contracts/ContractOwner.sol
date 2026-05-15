@@ -97,10 +97,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     ) external onlyDeployer {
         uint32[] memory pendingIds = pendingSpotAddOrUpdateProductIds();
         for (uint256 i = 0; i < pendingIds.length; i++) {
-            require(
-                productId != pendingIds[i],
-                "trying to add or update a spot product twice."
-            );
+            require(productId != pendingIds[i], "dup spot");
         }
         rawSpotAddOrUpdateProductCalls.push(
             abi.encode(
@@ -124,10 +121,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     ) external onlyDeployer {
         uint32[] memory pendingIds = pendingPerpAddOrUpdateProductIds();
         for (uint256 i = 0; i < pendingIds.length; i++) {
-            require(
-                productId != pendingIds[i],
-                "trying to add or update a perp product twice."
-            );
+            require(productId != pendingIds[i], "dup perp");
         }
         rawPerpAddOrUpdateProductCalls.push(
             abi.encode(
@@ -158,7 +152,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
                 rawSpotAddOrUpdateProductCalls[i],
                 (SpotAddOrUpdateProductCall)
             );
-            require(spotIds[i] == call.productId, "spot id doesn't match.");
+            require(spotIds[i] == call.productId, "spot mismatch");
             spotEngine.addOrUpdateProduct(
                 call.productId,
                 call.quoteId,
@@ -175,7 +169,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
                 rawPerpAddOrUpdateProductCalls[i],
                 (PerpAddOrUpdateProductCall)
             );
-            require(perpIds[i] == call.productId, "perp id doesn't match.");
+            require(perpIds[i] == call.productId, "perp mismatch");
             perpEngine.addOrUpdateProduct(
                 call.productId,
                 call.sizeIncrement,
@@ -457,7 +451,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         require(
             getDirectDepositV1BytecodeHash() ==
                 0x7974df41bdca2be1539fa7d01f41277f0d728823b20230a18a31e40c707874e7,
-            "Invalid DirectDepositV1 bytecode hash"
+            "dda hash"
         );
         DirectDepositV1 directDepositV1 = new DirectDepositV1{
             salt: bytes32(uint256(1))
@@ -471,70 +465,25 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         if (directDepositV1 == address(0)) {
             directDepositV1 = createDirectDepositV1(subaccount);
         }
-        _wrapDirectDepositVaultAssets(directDepositV1);
         DirectDepositV1(directDepositV1).creditDeposit();
     }
 
-    function isDirectDepositV1Ready(address recipient, bool isFirstDeposit)
-        external
-        returns (bool)
-    {
-        uint32[] memory productIds = spotEngine.getProductIds();
-        for (uint256 i = 0; i < productIds.length; i++) {
-            uint32 productId = productIds[i];
-            address tokenAddr = spotEngine.getToken(productId);
-            require(tokenAddr != address(0), "Invalid productId.");
-
-            IERC20Base token = IERC20Base(tokenAddr);
-            uint256 balance = token.balanceOf(recipient);
-            if (tokenAddr == wrappedNative) {
-                balance += recipient.balance;
-            }
-            address assetTokenAddr = _getVaultAsset(tokenAddr);
-            if (assetTokenAddr != address(0)) {
-                uint256 assetBalance = IERC20Base(assetTokenAddr).balanceOf(
-                    recipient
-                );
-                if (assetBalance != 0) {
-                    balance += _previewVaultDeposit(tokenAddr, assetBalance);
-                }
-            }
-            balance *= 10**(18 - token.decimals());
-            int128 oraclePriceX18 = spotEngine.getRisk(productId).priceX18;
-            if (
-                oraclePriceX18.mul(int128(uint128(balance))) >=
-                (isFirstDeposit ? MIN_FIRST_DEPOSIT_AMOUNT : MIN_DEPOSIT_AMOUNT)
-            ) {
-                return true;
-            }
+    function wrapVaultAsset(bytes32 subaccount, uint32 productId) external {
+        address payable directDepositV1 = directDepositV1Address[subaccount];
+        if (directDepositV1 == address(0)) {
+            directDepositV1 = createDirectDepositV1(subaccount);
         }
-        return false;
-    }
 
-    function getDirectDepositV1BytecodeHash() public pure returns (bytes32) {
-        return keccak256(type(DirectDepositV1).creationCode);
-    }
+        address tokenAddr = spotEngine.getToken(productId);
+        require(tokenAddr != address(0));
 
-    function _wrapDirectDepositVaultAssets(address payable directDepositV1)
-        internal
-    {
-        uint32[] memory productIds = spotEngine.getProductIds();
-        for (uint256 i = 0; i < productIds.length; i++) {
-            address tokenAddr = spotEngine.getToken(productIds[i]);
-            require(tokenAddr != address(0), "Invalid productId.");
+        address assetTokenAddr = IERC4626Base(tokenAddr).asset();
+        require(assetTokenAddr != address(0));
 
-            address assetTokenAddr = _getVaultAsset(tokenAddr);
-            if (assetTokenAddr == address(0)) {
-                continue;
-            }
-
-            uint256 assetBalance = IERC20Base(assetTokenAddr).balanceOf(
-                directDepositV1
-            );
-            if (assetBalance == 0) {
-                continue;
-            }
-
+        uint256 assetBalance = IERC20Base(assetTokenAddr).balanceOf(
+            directDepositV1
+        );
+        if (IERC4626Base(tokenAddr).previewDeposit(assetBalance) != 0) {
             DirectDepositV1(directDepositV1).withdraw(
                 IIERC20Base(assetTokenAddr)
             );
@@ -545,46 +494,82 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         }
     }
 
-    function _getVaultAsset(address tokenAddr)
-        internal
-        view
-        returns (address assetTokenAddr)
-    {
-        try IERC4626Base(tokenAddr).asset() returns (
-            address maybeAssetTokenAddr
-        ) {
-            if (
-                maybeAssetTokenAddr != address(0) &&
-                maybeAssetTokenAddr != tokenAddr
-            ) {
-                assetTokenAddr = maybeAssetTokenAddr;
-            }
-        } catch {
-            assetTokenAddr = address(0);
+    function isWrapVaultAssetReady(
+        address recipient,
+        uint32 productId,
+        bool isFirstDeposit
+    ) external returns (bool) {
+        address tokenAddr = spotEngine.getToken(productId);
+        require(tokenAddr != address(0));
+
+        address assetTokenAddr = IERC4626Base(tokenAddr).asset();
+        require(assetTokenAddr != address(0));
+
+        uint256 assetBalance = IERC20Base(assetTokenAddr).balanceOf(recipient);
+        uint256 wrappedBalance = IERC4626Base(tokenAddr).previewDeposit(
+            assetBalance
+        );
+        if (wrappedBalance != 0) {
+            wrappedBalance *= 10**(18 - IERC20Base(tokenAddr).decimals());
+
+            return
+                _isDepositAmountReady(
+                    productId,
+                    wrappedBalance,
+                    isFirstDeposit
+                );
         }
+        return false;
     }
 
-    function _previewVaultDeposit(address tokenAddr, uint256 assetBalance)
-        internal
-        view
-        returns (uint256 wrappedBalance)
+    function isDirectDepositV1Ready(address recipient, bool isFirstDeposit)
+        external
+        returns (bool)
     {
-        try IERC4626Base(tokenAddr).previewDeposit(assetBalance) returns (
-            uint256 maybeWrappedBalance
-        ) {
-            wrappedBalance = maybeWrappedBalance;
-        } catch {
-            wrappedBalance = 0;
+        uint32[] memory productIds = spotEngine.getProductIds();
+        for (uint256 i = 0; i < productIds.length; i++) {
+            uint32 productId = productIds[i];
+            address tokenAddr = spotEngine.getToken(productId);
+            require(tokenAddr != address(0));
+
+            IERC20Base token = IERC20Base(tokenAddr);
+            uint256 balance = token.balanceOf(recipient);
+            if (tokenAddr == wrappedNative) {
+                balance += recipient.balance;
+            }
+            balance *= 10**(18 - token.decimals());
+            if (_isDepositAmountReady(productId, balance, isFirstDeposit)) {
+                return true;
+            }
         }
+        return false;
+    }
+
+    function _isDepositAmountReady(
+        uint32 productId,
+        uint256 balance,
+        bool isFirstDeposit
+    ) internal returns (bool) {
+        int128 oraclePriceX18 = spotEngine.getRisk(productId).priceX18;
+        if (oraclePriceX18 <= 0) {
+            return false;
+        }
+        if (balance > INT128_MAX) {
+            return true;
+        }
+        return
+            oraclePriceX18.mul(int128(uint128(balance))) >=
+            (isFirstDeposit ? MIN_FIRST_DEPOSIT_AMOUNT : MIN_DEPOSIT_AMOUNT);
+    }
+
+    function getDirectDepositV1BytecodeHash() public pure returns (bytes32) {
+        return keccak256(type(DirectDepositV1).creationCode);
     }
 
     function replaceUsdcEWithUsdc(bytes32 subaccount) external {
         require(block.chainid == 57073, ERR_UNAUTHORIZED);
         address payable directDepositV1 = directDepositV1Address[subaccount];
-        require(
-            directDepositV1 != address(0),
-            "DirectDeposit contract not created."
-        );
+        require(directDepositV1 != address(0), "no dda");
         address usdcE = 0xF1815bd50389c46847f0Bda824eC8da914045D14;
         address usdc = 0x2D270e6886d130D724215A266106e6832161EAEd;
         uint256 balance = IERC20Base(usdcE).balanceOf(directDepositV1);
@@ -600,24 +585,21 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         onlyOwner
     {
         address payable directDepositV1 = directDepositV1Address[subaccount];
-        require(
-            directDepositV1 != address(0),
-            "DirectDeposit contract not created."
-        );
+        require(directDepositV1 != address(0), "no dda");
         if (token == address(0)) {
             uint256 preBalance = address(this).balance;
             DirectDepositV1(directDepositV1).withdrawNative();
             uint256 postBalance = address(this).balance;
-            require(postBalance > preBalance, "Nothing to withdraw");
+            require(postBalance > preBalance, "empty");
             (bool success, ) = msg.sender.call{value: postBalance - preBalance}(
                 ""
             );
-            require(success, "Failed to transfer native token to owner");
+            require(success, "xfer");
         } else {
             uint256 preBalance = IERC20Base(token).balanceOf(address(this));
             DirectDepositV1(directDepositV1).withdraw(IIERC20Base(token));
             uint256 postBalance = IERC20Base(token).balanceOf(address(this));
-            require(postBalance > preBalance, "Nothing to withdraw");
+            require(postBalance > preBalance, "empty");
             IERC20Base(token).safeTransfer(
                 msg.sender,
                 postBalance - preBalance

@@ -16,12 +16,7 @@ import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
 import "./BaseWithdrawPool.sol";
-
-interface IProxyManager {
-    function getProxyManagerHelper() external view returns (address);
-
-    function getCodeHash(string memory name) external view returns (bytes32);
-}
+import "./interfaces/IProxyManager.sol";
 
 contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     using MathSD21x18 for int128;

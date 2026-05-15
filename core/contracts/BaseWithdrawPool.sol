@@ -61,7 +61,6 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         IERC20Base token = getToken(signedTx.tx.productId);
 
         address sendTo = address(uint160(bytes20(signedTx.tx.sender)));
-        require(sendTo == msg.sender, ERR_UNAUTHORIZED);
         uint128 transferAmount = signedTx.tx.amount;
 
         require(transferAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
@@ -72,8 +71,13 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
             transferAmount
         );
 
-        require(transferAmount > uint128(fee), "Fee larger than balance");
-        transferAmount -= uint128(fee);
+        if (sendTo == msg.sender) {
+            require(transferAmount > uint128(fee), "Fee larger than balance");
+            transferAmount -= uint128(fee);
+        } else {
+            safeTransferFrom(token, msg.sender, uint128(fee));
+        }
+
         fees[signedTx.tx.productId] += fee;
 
         handleWithdrawTransfer(token, sendTo, transferAmount);

@@ -330,4 +330,8 @@ interface IEndpoint {
     function getPriceX18(uint32 productId) external returns (int128);
 
     function getNlpPools() external view returns (NlpPool[] memory);
+
+    function upgradeEndpointTx(address _endpointTx) external;
+
+    function getEndpointTx() external view returns (address);
 }
