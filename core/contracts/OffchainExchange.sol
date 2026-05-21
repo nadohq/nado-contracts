@@ -990,6 +990,12 @@ contract OffchainExchange is
         nonDefaultFeeTierMask |= uint128(1) << txn.tier;
     }
 
+    // solhint-disable-next-line no-empty-blocks
+    function _onCreateIsolatedSubaccount(
+        bytes32, /* isolatedSubaccount */
+        bytes32 /* parentSubaccount */
+    ) internal virtual {}
+
     function createIsolatedSubaccount(
         IEndpoint.CreateIsolatedSubaccount memory txn,
         address linkedSigner
@@ -1057,6 +1063,10 @@ contract OffchainExchange is
             isolatedSubaccountsMask[senderAddress] |= 1 << id;
             parentSubaccounts[newIsolatedSubaccount] = txn.order.sender;
             isolatedSubaccounts[txn.order.sender][id] = newIsolatedSubaccount;
+            _onCreateIsolatedSubaccount(
+                newIsolatedSubaccount,
+                txn.order.sender
+            );
         }
 
         digestToSubaccount[digest] = newIsolatedSubaccount;
