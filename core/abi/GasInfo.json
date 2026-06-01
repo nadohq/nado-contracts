@@ -1,0 +1,100 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "GasInfo",
+  "sourceName": "contracts/util/GasInfo.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "decimals",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes",
+          "name": "_data",
+          "type": "bytes"
+        }
+      ],
+      "name": "getL1Fee",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes",
+          "name": "_data",
+          "type": "bytes"
+        }
+      ],
+      "name": "getL1GasUsed",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getPricesInWei",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x608060405234801561001057600080fd5b506101ac806100206000396000f3fe608060405234801561001057600080fd5b506004361061004c5760003560e01c8063313ce5671461005157806341b247a81461006757806349948e0e1461009b578063de26c4a11461009b575b600080fd5b60005b6040519081526020015b60405180910390f35b60008080808080604080519687526020870195909552938501929092526060840152608083015260a082015260c00161005e565b6100546100a93660046100c5565b50600090565b634e487b7160e01b600052604160045260246000fd5b6000602082840312156100d757600080fd5b813567ffffffffffffffff808211156100ef57600080fd5b818401915084601f83011261010357600080fd5b813581811115610115576101156100af565b604051601f8201601f19908116603f0116810190838211818310171561013d5761013d6100af565b8160405282815287602084870101111561015657600080fd5b82602086016020830137600092810160200192909252509594505050505056fea264697066735822122041571b2f2181aa5e5360415fde74646887649ec4c5345f398d0ec789dd253bbe64736f6c634300080d0033",
+  "deployedBytecode": "0x608060405234801561001057600080fd5b506004361061004c5760003560e01c8063313ce5671461005157806341b247a81461006757806349948e0e1461009b578063de26c4a11461009b575b600080fd5b60005b6040519081526020015b60405180910390f35b60008080808080604080519687526020870195909552938501929092526060840152608083015260a082015260c00161005e565b6100546100a93660046100c5565b50600090565b634e487b7160e01b600052604160045260246000fd5b6000602082840312156100d757600080fd5b813567ffffffffffffffff808211156100ef57600080fd5b818401915084601f83011261010357600080fd5b813581811115610115576101156100af565b604051601f8201601f19908116603f0116810190838211818310171561013d5761013d6100af565b8160405282815287602084870101111561015657600080fd5b82602086016020830137600092810160200192909252509594505050505056fea264697066735822122041571b2f2181aa5e5360415fde74646887649ec4c5345f398d0ec789dd253bbe64736f6c634300080d0033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}
