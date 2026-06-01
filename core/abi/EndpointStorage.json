@@ -1,0 +1,90 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "EndpointStorage",
+  "sourceName": "contracts/EndpointStorage.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "clearinghouse",
+      "outputs": [
+        {
+          "internalType": "contract IClearinghouse",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "nSubmissions",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "nlpPools",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "poolId",
+          "type": "uint64"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "subaccount",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "internalType": "uint128",
+          "name": "balanceWeightX18",
+          "type": "uint128"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "referralCodes",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}
