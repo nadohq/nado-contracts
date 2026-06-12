@@ -19,6 +19,13 @@ interface IVerifier {
         bytes memory signature
     ) external pure;
 
+    function validateCompactSignature(
+        bytes32 sender,
+        address linkedSigner,
+        bytes32 digest,
+        IEndpoint.CompactSignature memory signature
+    ) external pure;
+
     function computeDigest(
         IEndpoint.TransactionType txType,
         bytes calldata transactionBody

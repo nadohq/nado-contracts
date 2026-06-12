@@ -40,7 +40,8 @@ interface IEndpoint {
         AssertProduct,
         CloseIsolatedSubaccount,
         UpdateBuilder,
-        ClaimBuilderFee
+        ClaimBuilderFee,
+        WithdrawCollateralV2
     }
 
     enum LiquidationMode {
@@ -84,6 +85,26 @@ interface IEndpoint {
     struct SignedWithdrawCollateral {
         WithdrawCollateral tx;
         bytes signature;
+    }
+
+    struct CompactSignature {
+        bytes32 r;
+        bytes32 vs;
+    }
+
+    struct WithdrawCollateralV2 {
+        bytes32 sender;
+        uint32 productId;
+        uint128 amount;
+        uint64 nonce;
+        address sendTo;
+        uint128 appendix; // Reserved for forward-compatible withdrawal features.
+    }
+
+    struct SignedWithdrawCollateralV2 {
+        WithdrawCollateralV2 tx;
+        CompactSignature signature;
+        int128 feeX18;
     }
 
     struct MintNlp {
