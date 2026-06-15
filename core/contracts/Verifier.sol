@@ -21,6 +21,8 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         "TransferQuote(bytes32 sender,bytes32 recipient,uint128 amount,uint64 nonce)";
     string internal constant WITHDRAW_COLLATERAL_SIGNATURE =
         "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
+    string internal constant WITHDRAW_COLLATERAL_V2_SIGNATURE =
+        "WithdrawCollateralV2(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce,address sendTo,uint128 appendix)";
     string internal constant MINT_NLP_SIGNATURE =
         "MintNlp(bytes32 sender,uint128 quoteAmount,uint64 nonce)";
     string internal constant BURN_NLP_SIGNATURE =
@@ -301,6 +303,21 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         );
     }
 
+    function validateCompactSignature(
+        bytes32 sender,
+        address linkedSigner,
+        bytes32 digest,
+        IEndpoint.CompactSignature memory signature
+    ) public pure {
+        address recovered = ECDSA.recover(digest, signature.r, signature.vs);
+        require(
+            (recovered != address(0)) &&
+                ((recovered == address(uint160(bytes20(sender)))) ||
+                    (recovered == linkedSigner)),
+            ERR_INVALID_SIGNATURE
+        );
+    }
+
     function computeDigest(
         IEndpoint.TransactionType txType,
         bytes calldata transactionBody
@@ -335,6 +352,22 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
                     signedTx.tx.productId,
                     signedTx.tx.amount,
                     signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.WithdrawCollateralV2) {
+            IEndpoint.SignedWithdrawCollateralV2 memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedWithdrawCollateralV2)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(WITHDRAW_COLLATERAL_V2_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.productId,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce,
+                    signedTx.tx.sendTo,
+                    signedTx.tx.appendix
                 )
             );
         } else if (txType == IEndpoint.TransactionType.MintNlp) {

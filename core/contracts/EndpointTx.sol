@@ -87,7 +87,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
         bytes32 sender,
         uint64 nonce,
         bytes calldata transaction,
-        bytes memory signature
+        bytes memory signature,
+        bool allowLinkedSigner
     ) internal {
         validateNonce(sender, nonce);
         validateSignature(
@@ -98,7 +99,30 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                     transaction[1:]
                 )
             ),
-            signature
+            signature,
+            allowLinkedSigner
+        );
+        requireSubaccount(sender);
+    }
+
+    function validateSignedTx(
+        bytes32 sender,
+        uint64 nonce,
+        bytes calldata transaction,
+        IEndpoint.CompactSignature memory signature,
+        bool allowLinkedSigner
+    ) internal {
+        validateNonce(sender, nonce);
+        validateCompactSignature(
+            sender,
+            _hashTypedDataV4(
+                computeDigest(
+                    IEndpoint.TransactionType(uint8(transaction[0])),
+                    transaction[1:]
+                )
+            ),
+            signature,
+            allowLinkedSigner
         );
         requireSubaccount(sender);
     }
@@ -148,11 +172,26 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
     function validateSignature(
         bytes32 sender,
         bytes32 digest,
-        bytes memory signature
+        bytes memory signature,
+        bool allowLinkedSigner
     ) internal virtual {
         verifier.validateSignature(
             sender,
-            getLinkedSigner(sender),
+            allowLinkedSigner ? getLinkedSigner(sender) : address(0),
+            digest,
+            signature
+        );
+    }
+
+    function validateCompactSignature(
+        bytes32 sender,
+        bytes32 digest,
+        IEndpoint.CompactSignature memory signature,
+        bool allowLinkedSigner
+    ) internal virtual {
+        verifier.validateCompactSignature(
+            sender,
+            allowLinkedSigner ? getLinkedSigner(sender) : address(0),
             digest,
             signature
         );
@@ -323,7 +362,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                     signedTx.tx.sender,
                     signedTx.tx.nonce,
                     transaction,
-                    signedTx.signature
+                    signedTx.signature,
+                    true
                 );
                 // No liquidation fee for finalization (productId == uint32.max) because:
                 // 1) The liquidator receives no profit from finalization
@@ -343,7 +383,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.sender,
                 signedTx.tx.nonce,
                 transaction,
-                signedTx.signature
+                signedTx.signature,
+                true
             );
             chargeFee(
                 signedTx.tx.sender,
@@ -355,6 +396,35 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.productId,
                 signedTx.tx.amount,
                 address(0),
+                nSubmissions
+            );
+        } else if (txType == IEndpoint.TransactionType.WithdrawCollateralV2) {
+            IEndpoint.SignedWithdrawCollateralV2 memory signedTx = abi.decode(
+                transaction[1:],
+                (IEndpoint.SignedWithdrawCollateralV2)
+            );
+            validateSignedTx(
+                signedTx.tx.sender,
+                signedTx.tx.nonce,
+                transaction,
+                signedTx.signature,
+                signedTx.tx.sendTo == address(0)
+            );
+            int128 currentFeeX18 = spotEngine
+                .getConfig(signedTx.tx.productId)
+                .withdrawFeeX18;
+            require(signedTx.feeX18 >= 0);
+            require(signedTx.feeX18 <= currentFeeX18);
+            chargeFee(
+                signedTx.tx.sender,
+                signedTx.feeX18,
+                signedTx.tx.productId
+            );
+            clearinghouse.withdrawCollateral(
+                signedTx.tx.sender,
+                signedTx.tx.productId,
+                signedTx.tx.amount,
+                signedTx.tx.sendTo,
                 nSubmissions
             );
         } else if (txType == IEndpoint.TransactionType.SpotTick) {
@@ -434,7 +504,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.sender,
                 signedTx.tx.nonce,
                 transaction,
-                signedTx.signature
+                signedTx.signature,
+                true
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             priceX18[NLP_PRODUCT_ID] = signedTx.oraclePriceX18;
@@ -453,7 +524,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.sender,
                 signedTx.tx.nonce,
                 transaction,
-                signedTx.signature
+                signedTx.signature,
+                true
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             priceX18[NLP_PRODUCT_ID] = signedTx.oraclePriceX18;
@@ -474,7 +546,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.sender,
                 signedTx.tx.nonce,
                 transaction,
-                signedTx.signature
+                signedTx.signature,
+                true
             );
             linkedSigners[signedTx.tx.sender] = address(
                 uint160(bytes20(signedTx.tx.signer))
@@ -491,7 +564,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.sender,
                 signedTx.tx.nonce,
                 transaction,
-                signedTx.signature
+                signedTx.signature,
+                true
             );
             if (
                 RiskHelper.isIsolatedSubaccount(signedTx.tx.recipient) ||

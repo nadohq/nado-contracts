@@ -41,6 +41,43 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
 
     uint64 public minIdx;
 
+    function resolveFastWithdrawal(bytes calldata transaction)
+        internal
+        pure
+        returns (
+            uint32 productId,
+            address sendTo,
+            uint128 amount
+        )
+    {
+        IEndpoint.TransactionType txType = IEndpoint.TransactionType(
+            uint8(transaction[0])
+        );
+        if (txType == IEndpoint.TransactionType.WithdrawCollateral) {
+            IEndpoint.SignedWithdrawCollateral memory signedTx = abi.decode(
+                transaction[1:],
+                (IEndpoint.SignedWithdrawCollateral)
+            );
+            return (
+                signedTx.tx.productId,
+                address(uint160(bytes20(signedTx.tx.sender))),
+                signedTx.tx.amount
+            );
+        }
+        if (txType == IEndpoint.TransactionType.WithdrawCollateralV2) {
+            IEndpoint.SignedWithdrawCollateralV2 memory signedTx = abi.decode(
+                transaction[1:],
+                (IEndpoint.SignedWithdrawCollateralV2)
+            );
+            // V2 appendix is intentionally ignored until fast-withdraw features use it.
+            address resolvedSendTo = signedTx.tx.sendTo == address(0)
+                ? address(uint160(bytes20(signedTx.tx.sender)))
+                : signedTx.tx.sendTo;
+            return (signedTx.tx.productId, resolvedSendTo, signedTx.tx.amount);
+        }
+        revert("Invalid withdrawal tx type");
+    }
+
     function submitFastWithdrawal(
         uint64 idx,
         bytes calldata transaction,
@@ -53,23 +90,16 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         Verifier v = Verifier(verifier);
         v.requireValidTxSignatures(transaction, idx, signatures);
 
-        IEndpoint.SignedWithdrawCollateral memory signedTx = abi.decode(
-            transaction[1:],
-            (IEndpoint.SignedWithdrawCollateral)
-        );
-
-        IERC20Base token = getToken(signedTx.tx.productId);
-
-        address sendTo = address(uint160(bytes20(signedTx.tx.sender)));
-        uint128 transferAmount = signedTx.tx.amount;
+        (
+            uint32 productId,
+            address sendTo,
+            uint128 transferAmount
+        ) = resolveFastWithdrawal(transaction);
+        IERC20Base token = getToken(productId);
 
         require(transferAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
 
-        int128 fee = fastWithdrawalFeeAmount(
-            token,
-            signedTx.tx.productId,
-            transferAmount
-        );
+        int128 fee = fastWithdrawalFeeAmount(token, productId, transferAmount);
 
         if (sendTo == msg.sender) {
             require(transferAmount > uint128(fee), "Fee larger than balance");
@@ -78,7 +108,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
             safeTransferFrom(token, msg.sender, uint128(fee));
         }
 
-        fees[signedTx.tx.productId] += fee;
+        fees[productId] += fee;
 
         handleWithdrawTransfer(token, sendTo, transferAmount);
     }

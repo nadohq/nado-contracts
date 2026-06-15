@@ -422,7 +422,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         IERC20Base token = IERC20Base(spotEngine.getConfig(productId).token);
         require(address(token) != address(0));
 
-        if (sender != X_ACCOUNT) {
+        if (sendTo == address(0)) {
             sendTo = address(uint160(bytes20(sender)));
         }
 
