@@ -2,6 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./interfaces/engine/IProductEngine.sol";
+import "./interfaces/engine/ISpotEngine.sol";
+import "./interfaces/engine/IPerpEngine.sol";
 
 abstract contract ClearinghouseStorage {
     using MathSD21x18 for int128;
@@ -25,6 +27,16 @@ abstract contract ClearinghouseStorage {
     uint256 internal spreads;
 
     address internal withdrawPool;
+
+    function _spotEngine() internal view returns (ISpotEngine) {
+        return
+            ISpotEngine(address(engineByType[IProductEngine.EngineType.SPOT]));
+    }
+
+    function _perpEngine() internal view returns (IPerpEngine) {
+        return
+            IPerpEngine(address(engineByType[IProductEngine.EngineType.PERP]));
+    }
 
     function getLiqPriceX18(uint32 productId, int128 amount)
         internal

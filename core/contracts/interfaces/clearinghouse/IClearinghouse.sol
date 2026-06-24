@@ -50,6 +50,17 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
         int128[] calldata nlpPoolRebalanceX18
     ) external;
 
+    function forceRebalanceNlpPool(
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external;
+
+    function nlpProfitShare(
+        bytes32 poolSubaccount,
+        bytes32 recipient,
+        uint128 amount
+    ) external;
+
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
 

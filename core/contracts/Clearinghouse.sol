@@ -72,12 +72,8 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         public
         returns (int128 health)
     {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
+        ISpotEngine spotEngine = _spotEngine();
+        IPerpEngine perpEngine = _perpEngine();
 
         health = spotEngine.getHealthContribution(subaccount, healthType);
         // min health means that it is attempting to borrow a spot that exists outside
@@ -185,10 +181,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     }
 
     function _tokenAddress(uint32 productId) internal view returns (address) {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        return spotEngine.getConfig(productId).token;
+        return _spotEngine().getConfig(productId).token;
     }
 
     function _decimals(uint32 productId) internal virtual returns (uint8) {
@@ -204,9 +197,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     {
         require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+        ISpotEngine spotEngine = _spotEngine();
         uint8 decimals = _decimals(txn.productId);
 
         require(decimals <= MAX_DECIMALS);
@@ -224,9 +215,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     {
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int128 toTransfer = int128(txn.amount);
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+        ISpotEngine spotEngine = _spotEngine();
 
         // require the sender address to be the same as the recipient address
         // otherwise linked signers can transfer out
@@ -294,9 +283,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         require(amount <= insurance, ERR_NO_INSURANCE);
         insurance -= amount;
 
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+        ISpotEngine spotEngine = _spotEngine();
         IERC20Base token = IERC20Base(
             spotEngine.getConfig(QUOTE_PRODUCT_ID).token
         );
@@ -311,17 +298,11 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         );
         // only perp can be delisted
         require(
-            productToEngine[txn.productId] ==
-                engineByType[IProductEngine.EngineType.PERP],
+            productToEngine[txn.productId] == _perpEngine(),
             ERR_INVALID_PRODUCT
         );
-        require(
-            txn.priceX18 == IEndpoint(getEndpoint()).getPriceX18(txn.productId),
-            ERR_INVALID_PRICE
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
+        require(txn.priceX18 == _getPriceX18(txn.productId), ERR_INVALID_PRICE);
+        IPerpEngine perpEngine = _perpEngine();
         for (uint256 i = 0; i < txn.subaccounts.length; i++) {
             IPerpEngine.Balance memory balance = perpEngine.getBalance(
                 txn.productId,
@@ -416,9 +397,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     ) public virtual onlyEndpoint {
         require(!RiskHelper.isIsolatedSubaccount(sender), ERR_UNAUTHORIZED);
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+        ISpotEngine spotEngine = _spotEngine();
         IERC20Base token = IERC20Base(spotEngine.getConfig(productId).token);
         require(address(token) != address(0));
 
@@ -441,32 +420,27 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         emit ModifyCollateral(amountRealized, sender, productId);
     }
 
-    function mintNlp(
-        IEndpoint.MintNlp calldata txn,
-        int128 oraclePriceX18,
+    function _validateNlpRebalance(
         IEndpoint.NlpPool[] calldata nlpPools,
-        int128[] calldata nlpPoolRebalanceX18
-    ) external onlyEndpoint {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+        int128[] calldata nlpPoolRebalanceX18,
+        int128 deltaQuoteAmount
+    ) internal pure {
         require(
             nlpPools.length == nlpPoolRebalanceX18.length,
             ERR_INVALID_NLP_REBALANCE
         );
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        spotEngine.updatePrice(NLP_PRODUCT_ID, oraclePriceX18);
-        require(txn.quoteAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-
-        int128 quoteAmount = int128(txn.quoteAmount);
         int128 rebalanceAmount = 0;
         for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
             rebalanceAmount += nlpPoolRebalanceX18[i];
-            require(nlpPoolRebalanceX18[i] >= 0, ERR_INVALID_NLP_REBALANCE);
         }
-        require(quoteAmount == rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
+        require(deltaQuoteAmount == rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
+    }
 
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -quoteAmount);
+    function _applyNlpRebalance(
+        ISpotEngine spotEngine,
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) internal {
         for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
             spotEngine.updateBalance(
                 QUOTE_PRODUCT_ID,
@@ -474,10 +448,33 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
                 nlpPoolRebalanceX18[i]
             );
         }
+    }
 
+    function mintNlp(
+        IEndpoint.MintNlp calldata txn,
+        int128 oraclePriceX18,
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external onlyEndpoint {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+
+        ISpotEngine spotEngine = _spotEngine();
+        spotEngine.updatePrice(NLP_PRODUCT_ID, oraclePriceX18);
+
+        require(txn.quoteAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        int128 quoteAmount = int128(txn.quoteAmount);
         int128 nlpAmount = quoteAmount.div(oraclePriceX18);
+
+        _validateNlpRebalance(nlpPools, nlpPoolRebalanceX18, quoteAmount);
+        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+            require(nlpPoolRebalanceX18[i] >= 0, ERR_INVALID_NLP_REBALANCE);
+        }
+
         spotEngine.updateBalance(NLP_PRODUCT_ID, txn.sender, nlpAmount);
         spotEngine.updateBalance(NLP_PRODUCT_ID, N_ACCOUNT, -nlpAmount);
+
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -quoteAmount);
+        _applyNlpRebalance(spotEngine, nlpPools, nlpPoolRebalanceX18);
 
         require(
             getHealth(txn.sender, IProductEngine.HealthType.INITIAL) >= 0,
@@ -492,44 +489,31 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         int128[] calldata nlpPoolRebalanceX18
     ) external onlyEndpoint {
         require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
-        require(
-            nlpPools.length == nlpPoolRebalanceX18.length,
-            ERR_INVALID_NLP_REBALANCE
-        );
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        spotEngine.updatePrice(NLP_PRODUCT_ID, oraclePriceX18);
-        require(txn.nlpAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
 
+        ISpotEngine spotEngine = _spotEngine();
+        spotEngine.updatePrice(NLP_PRODUCT_ID, oraclePriceX18);
+
+        require(txn.nlpAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int128 nlpAmount = int128(txn.nlpAmount);
         require(
             spotEngine.getNlpUnlockedBalance(txn.sender).amount >= nlpAmount,
             ERR_UNLOCKED_NLP_INSUFFICIENT
         );
-        spotEngine.updateBalance(NLP_PRODUCT_ID, txn.sender, -nlpAmount);
-        spotEngine.updateBalance(NLP_PRODUCT_ID, N_ACCOUNT, nlpAmount);
-
         int128 quoteAmount = nlpAmount.mul(oraclePriceX18);
         int128 burnFee = MathHelper.max(ONE, quoteAmount / 1000);
         quoteAmount = MathHelper.max(0, quoteAmount - burnFee);
 
-        if (quoteAmount > 0) {
-            int128 rebalanceAmount = 0;
-            for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
-                rebalanceAmount += nlpPoolRebalanceX18[i];
-                require(nlpPoolRebalanceX18[i] <= 0, ERR_INVALID_NLP_REBALANCE);
-            }
-            require(quoteAmount == -rebalanceAmount, ERR_INVALID_NLP_REBALANCE);
+        _validateNlpRebalance(nlpPools, nlpPoolRebalanceX18, -quoteAmount);
+        for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
+            require(nlpPoolRebalanceX18[i] <= 0, ERR_INVALID_NLP_REBALANCE);
+        }
 
+        spotEngine.updateBalance(NLP_PRODUCT_ID, txn.sender, -nlpAmount);
+        spotEngine.updateBalance(NLP_PRODUCT_ID, N_ACCOUNT, nlpAmount);
+
+        if (quoteAmount > 0) {
             spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
-            for (uint128 i = 0; i < nlpPoolRebalanceX18.length; i++) {
-                spotEngine.updateBalance(
-                    QUOTE_PRODUCT_ID,
-                    nlpPools[i].subaccount,
-                    nlpPoolRebalanceX18[i]
-                );
-            }
+            _applyNlpRebalance(spotEngine, nlpPools, nlpPoolRebalanceX18);
         }
 
         require(
@@ -545,17 +529,50 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         );
     }
 
+    function forceRebalanceNlpPool(
+        IEndpoint.NlpPool[] calldata nlpPools,
+        int128[] calldata nlpPoolRebalanceX18
+    ) external onlyEndpoint {
+        _validateNlpRebalance(nlpPools, nlpPoolRebalanceX18, 0);
+        ISpotEngine spotEngine = _spotEngine();
+        _applyNlpRebalance(spotEngine, nlpPools, nlpPoolRebalanceX18);
+
+        for (uint128 i = 1; i < nlpPools.length; i++) {
+            require(
+                getHealth(
+                    nlpPools[i].subaccount,
+                    IProductEngine.HealthType.INITIAL
+                ) >= 0,
+                ERR_SUBACCT_HEALTH
+            );
+        }
+    }
+
+    function nlpProfitShare(
+        bytes32 poolSubaccount,
+        bytes32 recipient,
+        uint128 amount
+    ) external onlyEndpoint {
+        require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        int128 toTransfer = int128(amount);
+        ISpotEngine spotEngine = _spotEngine();
+
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, poolSubaccount, -toTransfer);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, recipient, toTransfer);
+
+        require(
+            getHealth(poolSubaccount, IProductEngine.HealthType.INITIAL) >= 0,
+            ERR_SUBACCT_HEALTH
+        );
+    }
+
     function claimSequencerFees(int128[] calldata fees)
         external
         virtual
         onlyEndpoint
     {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
+        ISpotEngine spotEngine = _spotEngine();
+        IPerpEngine perpEngine = _perpEngine();
 
         uint32[] memory spotIds = spotEngine.getProductIds();
         uint32[] memory perpIds = perpEngine.getProductIds();
@@ -598,14 +615,15 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     }
 
     function _settlePnl(bytes32 subaccount, uint256 productIds) internal {
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
+        IPerpEngine perpEngine = _perpEngine();
 
         int128 amountSettled = perpEngine.settlePnl(subaccount, productIds);
 
-        ISpotEngine(address(engineByType[IProductEngine.EngineType.SPOT]))
-            .updateBalance(QUOTE_PRODUCT_ID, subaccount, amountSettled);
+        _spotEngine().updateBalance(
+            QUOTE_PRODUCT_ID,
+            subaccount,
+            amountSettled
+        );
     }
 
     function settlePnl(bytes calldata transaction) external onlyEndpoint {
@@ -621,11 +639,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     function _isAboveInitial(bytes32 subaccount) internal returns (bool) {
         // Weighted initial health with limit orders < 0
         return getHealth(subaccount, IProductEngine.HealthType.INITIAL) >= 0;
-    }
-
-    function _isUnderMaintenance(bytes32 subaccount) internal returns (bool) {
-        // Weighted maintenance health < 0
-        return getHealth(subaccount, IProductEngine.HealthType.MAINTENANCE) < 0;
     }
 
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata txn)
@@ -678,6 +691,10 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         return spreads;
     }
 
+    function _getPriceX18(uint32 productId) internal returns (int128) {
+        return IEndpoint(getEndpoint()).getPriceX18(productId);
+    }
+
     function checkMinDeposit(
         uint32 productId,
         uint128 amount,
@@ -691,7 +708,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         int128 amountRealized = int128(multiplier) * int128(amount);
         int128 priceX18 = ONE;
         if (productId != QUOTE_PRODUCT_ID) {
-            priceX18 = IEndpoint(getEndpoint()).getPriceX18(productId);
+            priceX18 = _getPriceX18(productId);
         }
 
         return priceX18.mul(amountRealized) >= minDepositAmount;
@@ -720,12 +737,8 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             (IEndpoint.ManualAssert)
         );
         require(txn.insurance == insurance, ERR_DSYNC);
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
+        ISpotEngine spotEngine = _spotEngine();
+        IPerpEngine perpEngine = _perpEngine();
         perpEngine.manualAssert(txn.perpStates);
         spotEngine.manualAssert(txn.spotStates);
     }
@@ -744,9 +757,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     }
 
     function getSlowModeFee() external view returns (uint256) {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+        ISpotEngine spotEngine = _spotEngine();
         IERC20Base token = IERC20Base(
             spotEngine.getConfig(QUOTE_PRODUCT_ID).token
         );
@@ -761,14 +772,10 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     {
         require(subaccount != N_ACCOUNT, ERR_UNAUTHORIZED);
 
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+        ISpotEngine spotEngine = _spotEngine();
         uint32[] memory spotProducts = spotEngine.getProductIds();
 
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
+        IPerpEngine perpEngine = _perpEngine();
         uint32[] memory perpProducts = perpEngine.getProductIds();
 
         for (uint32 i = 0; i < spotProducts.length; i++) {
