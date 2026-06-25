@@ -41,7 +41,9 @@ interface IEndpoint {
         CloseIsolatedSubaccount,
         UpdateBuilder,
         ClaimBuilderFee,
-        WithdrawCollateralV2
+        WithdrawCollateralV2,
+        ForceRebalanceNlpPool,
+        NlpProfitShare
     }
 
     enum LiquidationMode {
@@ -146,6 +148,16 @@ interface IEndpoint {
 
     struct DeleteNlpPool {
         uint64 poolId;
+    }
+
+    struct ForceRebalanceNlpPool {
+        int128[] nlpPoolRebalanceX18;
+    }
+
+    struct NlpProfitShare {
+        uint64 poolId;
+        bytes32 recipient;
+        uint128 amount;
     }
 
     struct UpdateBuilder {

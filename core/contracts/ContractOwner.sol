@@ -19,6 +19,7 @@ import "./libraries/ERC20Helper.sol";
 import "./common/Constants.sol";
 
 contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
+    error InvalidInput();
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
 
@@ -222,6 +223,15 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             rawSpotAddOrUpdateProductCalls.length > 0;
     }
 
+    function _submitSlowModeTransaction(
+        IEndpoint.TransactionType txType,
+        bytes memory payload
+    ) internal {
+        endpoint.submitSlowModeTransaction(
+            abi.encodePacked(uint8(txType), payload)
+        );
+    }
+
     function withdrawInsurance(uint128 amount, address sendTo)
         external
         onlyOwner
@@ -230,11 +240,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             amount,
             sendTo
         );
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.WithdrawInsurance),
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.WithdrawInsurance,
             abi.encode(_txn)
         );
-        endpoint.submitSlowModeTransaction(txn);
     }
 
     function depositInsurance(uint128 amount) external onlyOwner {
@@ -247,11 +256,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         IEndpoint.DepositInsurance memory _txn = IEndpoint.DepositInsurance(
             amount
         );
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.DepositInsurance),
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.DepositInsurance,
             abi.encode(_txn)
         );
-        endpoint.submitSlowModeTransaction(txn);
     }
 
     function updateBuilders(
@@ -261,10 +269,14 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         int128[] calldata lowestFeeRates,
         int128[] calldata highestFeeRates
     ) external onlyOwner {
-        require(builderIds.length == owners.length, "invalid inputs");
-        require(builderIds.length == defaultFeeTiers.length, "invalid inputs");
-        require(builderIds.length == lowestFeeRates.length, "invalid inputs");
-        require(builderIds.length == highestFeeRates.length, "invalid inputs");
+        if (
+            builderIds.length != owners.length ||
+            builderIds.length != defaultFeeTiers.length ||
+            builderIds.length != lowestFeeRates.length ||
+            builderIds.length != highestFeeRates.length
+        ) {
+            revert InvalidInput();
+        }
         for (uint256 i = 0; i < builderIds.length; i++) {
             IEndpoint.UpdateBuilder memory _txn = IEndpoint.UpdateBuilder(
                 builderIds[i],
@@ -273,11 +285,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
                 lowestFeeRates[i],
                 highestFeeRates[i]
             );
-            bytes memory txn = abi.encodePacked(
-                uint8(IEndpoint.TransactionType.UpdateBuilder),
+            _submitSlowModeTransaction(
+                IEndpoint.TransactionType.UpdateBuilder,
                 abi.encode(_txn)
             );
-            endpoint.submitSlowModeTransaction(txn);
         }
     }
 
@@ -289,11 +300,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             owner,
             balanceWeightX18
         );
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.AddNlpPool),
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.AddNlpPool,
             abi.encode(_txn)
         );
-        endpoint.submitSlowModeTransaction(txn);
     }
 
     function updateNlpPool(
@@ -306,20 +316,46 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             owner,
             balanceWeightX18
         );
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.UpdateNlpPool),
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.UpdateNlpPool,
             abi.encode(_txn)
         );
-        endpoint.submitSlowModeTransaction(txn);
     }
 
     function deleteNlpPool(uint64 poolId) external onlyOwner {
         IEndpoint.DeleteNlpPool memory _txn = IEndpoint.DeleteNlpPool(poolId);
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.DeleteNlpPool),
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.DeleteNlpPool,
             abi.encode(_txn)
         );
-        endpoint.submitSlowModeTransaction(txn);
+    }
+
+    function forceRebalanceNlpPool(int128[] calldata nlpPoolRebalanceX18)
+        external
+        onlyOwner
+    {
+        IEndpoint.ForceRebalanceNlpPool memory _txn = IEndpoint
+            .ForceRebalanceNlpPool(nlpPoolRebalanceX18);
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.ForceRebalanceNlpPool,
+            abi.encode(_txn)
+        );
+    }
+
+    function nlpProfitShare(
+        uint64 poolId,
+        bytes32 recipient,
+        uint128 amount
+    ) external onlyOwner {
+        IEndpoint.NlpProfitShare memory _txn = IEndpoint.NlpProfitShare(
+            poolId,
+            recipient,
+            amount
+        );
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.NlpProfitShare,
+            abi.encode(_txn)
+        );
     }
 
     function delistProduct(
@@ -327,18 +363,19 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         int128[] calldata pricesX18,
         bytes32[] calldata subaccounts
     ) external onlyDeployer {
-        require(productIds.length == pricesX18.length, "invalid inputs");
+        if (productIds.length != pricesX18.length) {
+            revert InvalidInput();
+        }
         for (uint256 i = 0; i < productIds.length; i++) {
             IEndpoint.DelistProduct memory _txn = IEndpoint.DelistProduct(
                 productIds[i],
                 pricesX18[i],
                 subaccounts
             );
-            bytes memory txn = abi.encodePacked(
-                uint8(IEndpoint.TransactionType.DelistProduct),
+            _submitSlowModeTransaction(
+                IEndpoint.TransactionType.DelistProduct,
                 abi.encode(_txn)
             );
-            endpoint.submitSlowModeTransaction(txn);
         }
     }
 
@@ -359,11 +396,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
             amount,
             sendTo
         );
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.RebalanceXWithdraw),
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.RebalanceXWithdraw,
             abi.encode(_txn)
         );
-        endpoint.submitSlowModeTransaction(txn);
     }
 
     function updateTierFeeRates(
@@ -372,9 +408,13 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         int128[] memory makerRateX18,
         int128[] memory takerRateX18
     ) external onlyOwner {
-        require(tier.length == productId.length, "invalid inputs");
-        require(tier.length == makerRateX18.length, "invalid inputs");
-        require(tier.length == takerRateX18.length, "invalid inputs");
+        if (
+            tier.length != productId.length ||
+            tier.length != makerRateX18.length ||
+            tier.length != takerRateX18.length
+        ) {
+            revert InvalidInput();
+        }
         for (uint256 i = 0; i < tier.length; i++) {
             IEndpoint.UpdateTierFeeRates memory _txn = IEndpoint
                 .UpdateTierFeeRates(
@@ -383,11 +423,10 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
                     makerRateX18[i],
                     takerRateX18[i]
                 );
-            bytes memory txn = abi.encodePacked(
-                uint8(IEndpoint.TransactionType.UpdateTierFeeRates),
+            _submitSlowModeTransaction(
+                IEndpoint.TransactionType.UpdateTierFeeRates,
                 abi.encode(_txn)
             );
-            endpoint.submitSlowModeTransaction(txn);
         }
     }
 

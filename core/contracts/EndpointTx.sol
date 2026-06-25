@@ -277,6 +277,40 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 (IEndpoint.DeleteNlpPool)
             );
             deleteNlpPool(txn.poolId);
+        } else if (txType == IEndpoint.TransactionType.ForceRebalanceNlpPool) {
+            IEndpoint.ForceRebalanceNlpPool memory txn = abi.decode(
+                transaction[1:],
+                (IEndpoint.ForceRebalanceNlpPool)
+            );
+            clearinghouse.forceRebalanceNlpPool(
+                nlpPools,
+                txn.nlpPoolRebalanceX18
+            );
+        } else if (txType == IEndpoint.TransactionType.NlpProfitShare) {
+            IEndpoint.NlpProfitShare memory txn = abi.decode(
+                transaction[1:],
+                (IEndpoint.NlpProfitShare)
+            );
+            require(
+                txn.poolId > 0 && txn.poolId < nlpPools.length,
+                ERR_INVALID_NLP_POOL
+            );
+            require(
+                nlpPools[txn.poolId].owner != address(0),
+                ERR_INVALID_NLP_POOL
+            );
+            require(
+                address(uint160(bytes20(txn.recipient))) ==
+                    nlpPools[txn.poolId].owner,
+                ERR_UNAUTHORIZED
+            );
+            requireSubaccount(txn.recipient);
+            require(!RiskHelper.isIsolatedSubaccount(txn.recipient));
+            clearinghouse.nlpProfitShare(
+                nlpPools[txn.poolId].subaccount,
+                txn.recipient,
+                txn.amount
+            );
         } else if (txType == IEndpoint.TransactionType.UpdateBuilder) {
             IOffchainExchange(offchainExchange).updateBuilder(transaction);
         } else if (txType == IEndpoint.TransactionType.ClaimBuilderFee) {
@@ -327,6 +361,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
             txType == IEndpoint.TransactionType.AddNlpPool ||
             txType == IEndpoint.TransactionType.UpdateNlpPool ||
             txType == IEndpoint.TransactionType.DeleteNlpPool ||
+            txType == IEndpoint.TransactionType.ForceRebalanceNlpPool ||
+            txType == IEndpoint.TransactionType.NlpProfitShare ||
             txType == IEndpoint.TransactionType.UpdateBuilder
         ) {
             require(sender == owner());
