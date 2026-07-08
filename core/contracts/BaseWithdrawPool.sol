@@ -47,6 +47,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         returns (
             uint32 productId,
             address sendTo,
+            address sender,
             uint128 amount
         )
     {
@@ -61,6 +62,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
             return (
                 signedTx.tx.productId,
                 address(uint160(bytes20(signedTx.tx.sender))),
+                address(uint160(bytes20(signedTx.tx.sender))),
                 signedTx.tx.amount
             );
         }
@@ -73,7 +75,12 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
             address resolvedSendTo = signedTx.tx.sendTo == address(0)
                 ? address(uint160(bytes20(signedTx.tx.sender)))
                 : signedTx.tx.sendTo;
-            return (signedTx.tx.productId, resolvedSendTo, signedTx.tx.amount);
+            return (
+                signedTx.tx.productId,
+                resolvedSendTo,
+                address(uint160(bytes20(signedTx.tx.sender))),
+                signedTx.tx.amount
+            );
         }
         revert("Invalid withdrawal tx type");
     }
@@ -93,6 +100,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         (
             uint32 productId,
             address sendTo,
+            address sender,
             uint128 transferAmount
         ) = resolveFastWithdrawal(transaction);
         IERC20Base token = getToken(productId);
@@ -101,7 +109,7 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
 
         int128 fee = fastWithdrawalFeeAmount(token, productId, transferAmount);
 
-        if (sendTo == msg.sender) {
+        if (sendTo == msg.sender || sender == msg.sender) {
             require(transferAmount > uint128(fee), "Fee larger than balance");
             transferAmount -= uint128(fee);
         } else {
