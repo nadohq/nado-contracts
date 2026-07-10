@@ -136,6 +136,10 @@ abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
         // set minIdx to most recent withdrawal submitted by sequencer
         minIdx = idx;
 
+        if (sendTo == address(token)) {
+            return;
+        }
+
         handleWithdrawTransfer(token, sendTo, amount);
     }
 
