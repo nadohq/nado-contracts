@@ -7,7 +7,7 @@ import "./MathSD21x18.sol";
 library MathHelper {
     using MathSD21x18 for int128;
 
-    /// @notice Returns market id for two given product ids
+    /// @notice Returns the maximum of two int128 values
     function max(int128 a, int128 b) internal pure returns (int128) {
         return a > b ? a : b;
     }
