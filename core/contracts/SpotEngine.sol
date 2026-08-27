@@ -2,13 +2,14 @@
 pragma solidity ^0.8.0;
 
 import "./common/Constants.sol";
+import "./common/DeployerGuard.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./libraries/RiskHelper.sol";
 import "./SpotEngineState.sol";
 
-contract SpotEngine is SpotEngineState {
+contract SpotEngine is DeployerGuard, SpotEngineState {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -17,7 +18,7 @@ contract SpotEngine is SpotEngineState {
         address _quote,
         address _endpoint,
         address _admin
-    ) external {
+    ) external onlyImplDeployer {
         _initialize(_clearinghouse, _offchainExchange, _endpoint, _admin);
 
         configs[QUOTE_PRODUCT_ID] = Config({

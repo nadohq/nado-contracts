@@ -366,6 +366,11 @@ contract ClearinghouseLiq is
         }
 
         v.insurance = insurance;
+        // Exclude the fee credited by the immediately-preceding liquidation:
+        // counting it as usable insurance would re-arm canLiquidateMore after
+        // every liquidation step and block socialization forever, since each
+        // blocked attempt would demand yet another fee-paying liquidation
+        // (liveness guard; exercised by the engine test test_socialization).
         v.insurance -= lastLiquidationFees;
         v.canLiquidateMore = (quoteBalance.amount + v.insurance) > 0;
 
@@ -583,6 +588,17 @@ contract ClearinghouseLiq is
         // however, after the first step, insurance funds will be refilled a little bit
         // which blocks the second step, so we keep the fees of the last liquidation and
         // do not use this part in socialization to unblock it.
+        //
+        // This mechanism only guarantees liveness of the socialization step.
+        // Fees from earlier liquidation rounds remain usable insurance for
+        // subsequent regular liquidations, so the effective insurance-fund
+        // share of liquidation fees is not exactly bounded per round — an
+        // accepted trade-off, since only the no-infinite-loop property is
+        // required. The variable is also global (last writer wins): a
+        // liquidation of a different account landing between another
+        // account's last liquidation and its finalization can overwrite it
+        // and transiently delay that finalization; retrying after the next
+        // liquidation of the account succeeds.
         lastLiquidationFees = v.liquidationFees;
 
         emit Liquidation(

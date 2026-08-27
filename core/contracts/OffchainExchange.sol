@@ -11,6 +11,7 @@ import "./libraries/MathHelper.sol";
 import "./libraries/RiskHelper.sol";
 import "./interfaces/IOffchainExchange.sol";
 import "./EndpointGated.sol";
+import "./common/DeployerGuard.sol";
 import "./common/Errors.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
@@ -18,6 +19,7 @@ import "./interfaces/IEndpoint.sol";
 import {Endpoint} from "./Endpoint.sol";
 
 contract OffchainExchange is
+    DeployerGuard,
     IOffchainExchange,
     EndpointGated,
     EIP712Upgradeable
@@ -243,6 +245,7 @@ contract OffchainExchange is
     function initialize(address _clearinghouse, address _endpoint)
         external
         initializer
+        onlyImplDeployer
     {
         __Ownable_init();
         setEndpoint(_endpoint);
@@ -622,6 +625,12 @@ contract OffchainExchange is
         OrderInfo maker;
     }
 
+    // Intentionally a no-op: post-trade health checks are too gas-expensive
+    // for the matching hot path. Health is enforced off-chain — the engine
+    // checks it before matching, and the signing services re-simulate every
+    // transaction against a fork and refuse to co-sign a batch that leaves a
+    // subaccount unhealthy, so no transaction reaches this contract without
+    // having passed those checks.
     function isHealthy(
         bytes32 /* subaccount */
     ) internal view virtual returns (bool) {

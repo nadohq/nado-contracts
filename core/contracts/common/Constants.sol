@@ -49,6 +49,17 @@ uint96 constant MASK_6_BYTES = 0xFFFFFFFFFFFF000000000000;
 
 uint64 constant SLOW_MODE_TX_DELAY = 3 * 24 * 60 * 60; // 3 days
 
+// Gas guaranteed to each slow-mode tx before it may be consumed as failed.
+// Deliberately a bytecode constant, not a config value: the engine replays
+// this code, and a storage-configured budget could desync engine and chain
+// around a change; a constant stays synchronized through the normal
+// implementation-upgrade + code-hash flow. Sized at ~2x the largest single
+// tx observed in production while still fundable under the EIP-7825 tx gas
+// cap (budget * 64/63 + buffer must fit in one transaction).
+uint256 constant SLOW_MODE_GAS_BUDGET = 8_000_000;
+
+uint256 constant SLOW_MODE_GAS_BUFFER = 100_000;
+
 uint64 constant NLP_LOCK_PERIOD = 4 * 24 * 60 * 60; // 4 days
 
 int128 constant INF = type(int128).max / 128;

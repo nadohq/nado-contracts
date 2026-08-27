@@ -16,9 +16,15 @@ import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
 import "./BaseWithdrawPool.sol";
+import "./common/DeployerGuard.sol";
 import "./interfaces/IProxyManager.sol";
 
-contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
+contract Clearinghouse is
+    DeployerGuard,
+    EndpointGated,
+    ClearinghouseStorage,
+    IClearinghouse
+{
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
 
@@ -28,7 +34,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         address _clearinghouseLiq,
         uint256 _spreads,
         address _withdrawPool
-    ) external initializer {
+    ) external initializer onlyImplDeployer {
         __Ownable_init();
         setEndpoint(_endpoint);
         quote = _quote;

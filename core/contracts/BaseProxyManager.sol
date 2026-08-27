@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "./common/DeployerGuard.sol";
 
 interface ITransparentUpgradeableProxy {
     function upgradeTo(address) external;
@@ -71,7 +72,7 @@ contract ProxyManagerHelper {
     }
 }
 
-abstract contract BaseProxyManager is OwnableUpgradeable {
+abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
     string internal constant CLEARINGHOUSE = "Clearinghouse";
     string internal constant CLEARINGHOUSE_LIQ = "ClearinghouseLiq";
     string internal constant ENDPOINT = "Endpoint";
@@ -99,12 +100,7 @@ abstract contract BaseProxyManager is OwnableUpgradeable {
         address impl;
     }
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize() external initializer {
+    function initialize() external initializer onlyImplDeployer {
         __Ownable_init();
         submitter = msg.sender;
         proxyManagerHelper = new ProxyManagerHelper();
