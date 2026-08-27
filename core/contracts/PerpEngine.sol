@@ -2,13 +2,14 @@
 pragma solidity ^0.8.0;
 
 import "./common/Constants.sol";
+import "./common/DeployerGuard.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
 import "./PerpEngineState.sol";
 
-contract PerpEngine is PerpEngineState {
+contract PerpEngine is DeployerGuard, PerpEngineState {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -17,7 +18,7 @@ contract PerpEngine is PerpEngineState {
         address,
         address _endpoint,
         address _admin
-    ) external {
+    ) external onlyImplDeployer {
         _initialize(_clearinghouse, _offchainExchange, _endpoint, _admin);
     }
 
@@ -144,6 +145,12 @@ contract PerpEngine is PerpEngineState {
     {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
+        // Insurance is drained in productId order, so once it runs dry
+        // mid-loop the remaining (higher-id) markets absorb proportionally
+        // more socialized debt. A pro-rata allocation would need a second
+        // pass over all products; the skew is a known, accepted trade-off on
+        // a path that only runs during insolvency and gives no market a
+        // user-exploitable advantage.
         uint32[] memory _productIds = getProductIds();
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];

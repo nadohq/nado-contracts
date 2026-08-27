@@ -10,8 +10,13 @@ import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IERC20Base.sol";
 import "./libraries/ERC20Helper.sol";
 import "./common/Constants.sol";
+import "./common/DeployerGuard.sol";
 
-abstract contract BaseWithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
+abstract contract BaseWithdrawPool is
+    DeployerGuard,
+    EIP712Upgradeable,
+    OwnableUpgradeable
+{
     using ERC20Helper for IERC20Base;
     using MathSD21x18 for int128;
 

@@ -4,16 +4,25 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "./common/DeployerGuard.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
 import "./interfaces/IVerifier.sol";
 import "./interfaces/IEndpoint.sol";
 
-contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
+contract Verifier is
+    DeployerGuard,
+    EIP712Upgradeable,
+    OwnableUpgradeable,
+    IVerifier
+{
     Point[8] internal pubkeys;
     Point[256] internal aggregatePubkey;
     bool[256] internal isAggregatePubkeyLatest;
     uint256 internal nSigner;
+    // ECDSA signer addresses are provisioned separately from the Schnorr
+    // points so the two signature schemes never share a key (audit #006).
+    address[8] internal ecdsaSigners;
 
     string internal constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
         "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint32 productId,bool isEncodedSpread,int128 amount,uint64 nonce)";
@@ -31,20 +40,32 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
     event AssignPubKey(uint256 i, uint256 x, uint256 y);
+    event AssignEcdsaSigner(uint256 i, address signer);
     event DeletePubkey(uint256 index);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize(Point[8] memory initialSet) external initializer {
+    function initialize(
+        Point[8] memory initialSet,
+        address[8] memory initialEcdsaSigners
+    ) external initializer onlyImplDeployer {
         __Ownable_init();
+        __EIP712_init("Nado", "0.0.1");
         for (uint256 i = 0; i < 8; ++i) {
             if (!isPointNone(initialSet[i])) {
                 _assignPubkey(i, initialSet[i].x, initialSet[i].y);
+                _assignEcdsaSigner(i, initialEcdsaSigners[i]);
             }
         }
+    }
+
+    // Backfills the EIP-712 domain on proxies whose original initialize()
+    // predates __EIP712_init. Any caller may run it (the parameters are
+    // constants), but it must not precede initialize() on a fresh proxy:
+    // reinitializer(2) would otherwise let anyone pin _initialized at 2 and
+    // permanently brick initialize(). The owner check requires initialize() to
+    // have already set the owner.
+    function initializeV2() external reinitializer(2) {
+        require(owner() != address(0));
+        __EIP712_init("Nado", "0.0.1");
     }
 
     function revertGasInfo(uint256 i, uint256 gasUsed) external pure {
@@ -82,11 +103,23 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         emit AssignPubKey(i, x, y);
     }
 
+    function assignEcdsaSigner(uint256 i, address signer) public onlyOwner {
+        _assignEcdsaSigner(i, signer);
+    }
+
+    function _assignEcdsaSigner(uint256 i, address signer) internal {
+        require(i < 8);
+        require(signer != address(0));
+        ecdsaSigners[i] = signer;
+        emit AssignEcdsaSigner(i, signer);
+    }
+
     function deletePubkey(uint256 index) public onlyOwner {
         if (!isPointNone(pubkeys[index])) {
             nSigner -= 1;
             delete pubkeys[index];
         }
+        delete ecdsaSigners[index];
         emit DeletePubkey(index);
     }
 
@@ -97,6 +130,10 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
     function getPubkeyAddress(uint8 index) public view returns (address) {
         Point memory p = getPubkey(index);
         return address(uint160(uint256(keccak256(abi.encode(p.x, p.y)))));
+    }
+
+    function getEcdsaSigner(uint8 index) public view returns (address) {
+        return ecdsaSigners[index];
     }
 
     function getAggregatePubkey(uint8 signerBitmask)
@@ -250,9 +287,31 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         bytes memory signature,
         uint8 signerIndex
     ) public view returns (bool) {
-        address expectedAddress = getPubkeyAddress(signerIndex);
+        address expectedAddress = ecdsaSigners[signerIndex];
+        if (expectedAddress == address(0)) {
+            return false;
+        }
         address recovered = ECDSA.recover(digest, signature);
         return expectedAddress == recovered;
+    }
+
+    function txSignatureDigest(bytes calldata txn, uint64 idx)
+        public
+        view
+        returns (bytes32)
+    {
+        return
+            _hashTypedDataV4(
+                keccak256(
+                    abi.encode(
+                        keccak256(
+                            "SignedTransaction(uint64 idx,bytes transaction)"
+                        ),
+                        idx,
+                        keccak256(txn)
+                    )
+                )
+            );
     }
 
     // Type casting wraps around: uint8(256) returns 0
@@ -264,12 +323,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         bytes[] calldata signatures
     ) public view {
         require(signatures.length <= 256, "too many signatures");
-        bytes32 data = keccak256(
-            abi.encodePacked(uint256(block.chainid), uint256(idx), txn)
-        );
-        bytes32 hashedMsg = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", data)
-        );
+        bytes32 hashedMsg = txSignatureDigest(txn, idx);
 
         uint256 nSignatures = 0;
         for (uint256 i = 0; i < signatures.length; i++) {

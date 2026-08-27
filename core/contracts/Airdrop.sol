@@ -7,8 +7,9 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./common/DeployerGuard.sol";
 
-contract Airdrop is OwnableUpgradeable, IAirdrop {
+contract Airdrop is DeployerGuard, OwnableUpgradeable, IAirdrop {
     address internal token;
     address internal sanctions;
     uint32 internal pastWeeks;
@@ -16,14 +17,10 @@ contract Airdrop is OwnableUpgradeable, IAirdrop {
     mapping(uint32 => bytes32) internal merkleRoots;
     mapping(uint32 => mapping(address => uint256)) internal claimed;
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
     function initialize(address _token, address _sanctions)
         external
         initializer
+        onlyImplDeployer
     {
         __Ownable_init();
         token = _token;

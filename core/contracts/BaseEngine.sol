@@ -241,14 +241,37 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
             ERR_BAD_PRODUCT_CONFIG
         );
 
-        // product id is in ascending order
-        if (
-            productIds.length == 0 ||
-            productId > productIds[productIds.length - 1]
-        ) {
+        // productIds stays in ascending order, but new listings may fill id
+        // gaps below the current maximum, so membership in this engine's
+        // product list — not id monotonicity — decides between add and
+        // update. Previously a gap-filling id was silently treated as an
+        // update: registered nowhere and left with a zeroed price.
+        require(
+            _clearinghouse.getEngineByProduct(productId) == address(0) ||
+                _clearinghouse.getEngineByProduct(productId) == address(this),
+            ERR_BAD_PRODUCT_CONFIG
+        );
+
+        uint256 count = productIds.length;
+        uint256 pos = count;
+        isNewProduct = true;
+        for (uint256 i = 0; i < count; ++i) {
+            if (productIds[i] == productId) {
+                isNewProduct = false;
+                break;
+            }
+            if (productIds[i] > productId) {
+                pos = i;
+                break;
+            }
+        }
+        if (isNewProduct) {
             productIds.push(productId);
+            for (uint256 i = count; i > pos; --i) {
+                productIds[i] = productIds[i - 1];
+            }
+            productIds[pos] = productId;
             _clearinghouse.registerProduct(productId);
-            isNewProduct = true;
         }
 
         if (isNewProduct) {
@@ -273,19 +296,5 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     function updatePrice(uint32 productId, int128 priceX18) external virtual {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
         _risk().value[productId].priceX18 = priceX18;
-    }
-
-    function updateRisk(uint32 productId, RiskHelper.RiskStore memory riskStore)
-        external
-        onlyOwner
-    {
-        require(
-            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance,
-            ERR_BAD_PRODUCT_CONFIG
-        );
-
-        _risk().value[productId] = riskStore;
     }
 }

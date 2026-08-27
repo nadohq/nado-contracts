@@ -17,8 +17,9 @@ import "./interfaces/IERC20Base.sol";
 import "./interfaces/IERC4626Base.sol";
 import "./libraries/ERC20Helper.sol";
 import "./common/Constants.sol";
+import "./common/DeployerGuard.sol";
 
-contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
+contract ContractOwner is DeployerGuard, EIP712Upgradeable, OwnableUpgradeable {
     error InvalidInput();
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
@@ -40,10 +41,12 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     bytes[] internal rawSpotAddOrUpdateProductCalls;
     bytes[] internal rawPerpAddOrUpdateProductCalls;
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
+    address public feeCollector;
+
+    event FeeCollectorUpdated(address indexed feeCollector);
+
+    // accept ETH so withdrawFromDirectDepositV1 can receive native withdrawals
+    receive() external payable {}
 
     function initialize(
         address multisig,
@@ -54,7 +57,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         address _clearinghouse,
         address _verifier,
         address payable _wrappedNative
-    ) external initializer {
+    ) external initializer onlyImplDeployer {
         require(_deployer == msg.sender, "expected deployed to initialize");
         __Ownable_init();
         transferOwnership(multisig);
@@ -68,8 +71,29 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
     }
 
     modifier onlyDeployer() {
-        require(msg.sender == deployer, "sender must be deployer");
+        _checkDeployer();
         _;
+    }
+
+    modifier onlyOwnerOrFeeCollector() {
+        _checkOwnerOrFeeCollector();
+        _;
+    }
+
+    function _checkOwnerOrFeeCollector() internal view {
+        require(
+            msg.sender == owner() || msg.sender == feeCollector,
+            "not owner or fee collector"
+        );
+    }
+
+    function setFeeCollector(address _feeCollector) external onlyOwner {
+        feeCollector = _feeCollector;
+        emit FeeCollectorUpdated(_feeCollector);
+    }
+
+    function _checkDeployer() internal view {
+        require(msg.sender == deployer, "sender must be deployer");
     }
 
     struct SpotAddOrUpdateProductCall {
@@ -379,7 +403,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         }
     }
 
-    function dumpFees() external onlyOwner {
+    function dumpFees() external onlyOwnerOrFeeCollector {
         bytes memory txn = abi.encodePacked(
             uint8(IEndpoint.TransactionType.DumpFees)
         );
@@ -390,7 +414,7 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         uint32 productId,
         uint128 amount,
         address sendTo
-    ) external onlyOwner {
+    ) external onlyOwnerOrFeeCollector {
         IEndpoint.RebalanceXWithdraw memory _txn = IEndpoint.RebalanceXWithdraw(
             productId,
             amount,
@@ -450,18 +474,8 @@ contract ContractOwner is EIP712Upgradeable, OwnableUpgradeable {
         verifier.deletePubkey(index);
     }
 
-    function spotUpdateRisk(
-        uint32 productId,
-        RiskHelper.RiskStore memory riskStore
-    ) external onlyOwner {
-        spotEngine.updateRisk(productId, riskStore);
-    }
-
-    function perpUpdateRisk(
-        uint32 productId,
-        RiskHelper.RiskStore memory riskStore
-    ) external onlyOwner {
-        perpEngine.updateRisk(productId, riskStore);
+    function assignEcdsaSigner(uint256 i, address signer) public onlyOwner {
+        verifier.assignEcdsaSigner(i, signer);
     }
 
     function setWithdrawPool(address _withdrawPool) external onlyOwner {

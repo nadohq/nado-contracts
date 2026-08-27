@@ -10,6 +10,7 @@ import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./EndpointGated.sol";
 import "./EndpointTx.sol";
 import "./EndpointStorage.sol";
+import "./common/DeployerGuard.sol";
 import "./common/Errors.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
@@ -19,8 +20,21 @@ import "./interfaces/IERC20Base.sol";
 import "./interfaces/IVerifier.sol";
 import "./interfaces/IProxyManager.sol";
 
+// Gas spent by submitTransactionsChecked in verifier.requireValidSignature,
+// which the gas probe (submitTransactionsCheckedWithGasLimit) cannot execute
+// because no (e, s) signature exists at probe time. Steady-state worst case
+// measured at ~51k (8-of-8 signers, cold storage slots; VerifierGasProbe
+// test) plus the sequencer-check SLOAD, rounded up. Deliberately excludes
+// the one-off aggregate-pubkey cache rebuild after a key rotation (up to
+// ~950k), which is absorbed by the sequencer's gas-limit multiplier.
+// Declared here rather than in common/Constants.sol so the bytecode
+// (metadata hash) of unrelated contracts importing Constants.sol stays
+// unchanged.
+uint256 constant SIG_VERIFICATION_GAS_ESTIMATE = 60_000;
+
 // solhint-disable-next-line max-states-count
 contract Endpoint is
+    DeployerGuard,
     EIP712Upgradeable,
     OwnableUpgradeable,
     EndpointStorage,
@@ -35,7 +49,7 @@ contract Endpoint is
         IClearinghouse _clearinghouse,
         address _verifier,
         address _endpointTx
-    ) external initializer {
+    ) external initializer onlyImplDeployer {
         __Ownable_init();
         __EIP712_init("Nado", "0.0.1");
         sequencer = _sequencer;
@@ -202,28 +216,31 @@ contract Endpoint is
             // for testing purposes, we don't fail silently when the chainId is hardhat's default.
             this.processSlowModeTransaction(txn.sender, txn.tx);
         } else {
-            uint256 gasRemaining = gasleft();
+            // EIP-150 forwards at most 63/64 of the remaining gas, so demand
+            // the full budget plus overhead upfront: the inner call then
+            // provably receives its entire budget, a failure can never be a
+            // caller-induced out-of-gas, and the item is always safe to
+            // consume. An under-gassed caller reverts here, before the queue
+            // entry is touched.
+            require(
+                gasleft() >=
+                    SLOW_MODE_GAS_BUDGET +
+                        SLOW_MODE_GAS_BUDGET /
+                        63 +
+                        SLOW_MODE_GAS_BUFFER,
+                ERR_INSUFFICIENT_GAS
+            );
+            try
+                this.processSlowModeTransaction{gas: SLOW_MODE_GAS_BUDGET}(
+                    txn.sender,
+                    txn.tx
+                )
             // solhint-disable-next-line no-empty-blocks
-            try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
-                // we need to differentiate between a revert and an out of gas
-                // the issue is that in evm every inner call only 63/64 of the
-                // remaining gas in the outer frame is forwarded. as a result
-                // the amount of gas left for execution is (63/64)**len(stack)
-                // and you can get an out of gas while spending an arbitrarily
-                // low amount of gas in the final frame. we use a heuristic
-                // here that isn't perfect but covers our cases.
-                // having gasleft() <= gasRemaining / 2 buys us 44 nested calls
-                // before we miss out of gas errors; 1/2 ~= (63/64)**44
-                // this is good enough for our purposes
+            {
 
-                if (gasleft() <= 250000 || gasleft() <= gasRemaining / 2) {
-                    // solhint-disable-next-line no-inline-assembly
-                    assembly {
-                        invalid()
-                    }
-                }
-
-                // try return funds now removed
+            } catch {
+                // failed within its guaranteed budget: the tx is defective,
+                // skip it and let the queue advance
             }
         }
     }
@@ -280,10 +297,23 @@ contract Endpoint is
         // TODO: if one of these transactions fails this means the sequencer is in an error state
         // we should probably record this, and engage some sort of recovery mode
 
-        bytes32 digest = keccak256(abi.encode(idx));
+        bytes32 transactionsHash = keccak256(abi.encode(idx));
         for (uint256 i = 0; i < transactions.length; ++i) {
-            digest = keccak256(abi.encodePacked(digest, transactions[i]));
+            transactionsHash = keccak256(
+                abi.encodePacked(transactionsHash, transactions[i])
+            );
         }
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    keccak256(
+                        "SubmitTransactions(uint64 idx,bytes32 transactionsHash)"
+                    ),
+                    idx,
+                    transactionsHash
+                )
+            )
+        );
         verifier.requireValidSignature(digest, e, s, signerBitmask);
 
         for (uint256 i = 0; i < transactions.length; i++) {
@@ -293,6 +323,12 @@ contract Endpoint is
         }
     }
 
+    // Gas probe for submitTransactionsChecked: always reverts with the
+    // measured gas via revertGasInfo. It must burn the same gas as the real
+    // submission, so it mirrors the hash/digest computation and nSubmissions
+    // writes; the verifier call is the one piece it cannot execute (no (e, s)
+    // signature exists at probe time) and is accounted for by
+    // SIG_VERIFICATION_GAS_ESTIMATE.
     function submitTransactionsCheckedWithGasLimit(
         uint64 idx,
         bytes[] calldata transactions,
@@ -300,15 +336,42 @@ contract Endpoint is
     ) external {
         uint256 initialGas = gasleft();
         validateSubmissionIdx(idx);
+
+        bytes32 transactionsHash = keccak256(abi.encode(idx));
+        for (uint256 i = 0; i < transactions.length; ++i) {
+            transactionsHash = keccak256(
+                abi.encodePacked(transactionsHash, transactions[i])
+            );
+        }
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    keccak256(
+                        "SubmitTransactions(uint64 idx,bytes32 transactionsHash)"
+                    ),
+                    idx,
+                    transactionsHash
+                )
+            )
+        );
+        // consumes the otherwise-unused digest; a keccak output is never zero
+        require(digest != bytes32(0));
+
         for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
-            uint256 gasUsed = initialGas - gasleft();
+            nSubmissions += 1;
+            uint256 gasUsed = initialGas -
+                gasleft() +
+                SIG_VERIFICATION_GAS_ESTIMATE;
             if (gasUsed > gasLimit) {
                 verifier.revertGasInfo(i, gasUsed);
             }
         }
-        verifier.revertGasInfo(transactions.length, initialGas - gasleft());
+        verifier.revertGasInfo(
+            transactions.length,
+            initialGas - gasleft() + SIG_VERIFICATION_GAS_ESTIMATE
+        );
     }
 
     function setInitialPrice(uint32 productId, int128 initialPriceX18)

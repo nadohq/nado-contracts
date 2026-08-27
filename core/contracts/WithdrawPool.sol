@@ -13,7 +13,10 @@ import "./common/Constants.sol";
 import "./BaseWithdrawPool.sol";
 
 contract WithdrawPool is BaseWithdrawPool {
-    function initialize(address _clearinghouse, address _verifier) external {
+    function initialize(address _clearinghouse, address _verifier)
+        external
+        onlyImplDeployer
+    {
         _initialize(_clearinghouse, _verifier);
     }
 }
