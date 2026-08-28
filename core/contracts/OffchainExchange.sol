@@ -632,9 +632,9 @@ contract OffchainExchange is
     // subaccount unhealthy, so no transaction reaches this contract without
     // having passed those checks.
     function isHealthy(
-        bytes32 /* subaccount */
-    ) internal view virtual returns (bool) {
-        return true;
+        bytes32 subaccount
+    ) internal virtual returns (bool) {
+       return clearinghouse.getHealth(subaccount, IProductEngine.HealthType.INITIAL) >= 0;
     }
 
     function matchOrders(IEndpoint.MatchOrdersWithSigner calldata txn)
@@ -1085,15 +1085,12 @@ contract OffchainExchange is
             digestToMargin[digest] = margin;
             spotEngine.updateBalance(
                 QUOTE_PRODUCT_ID,
-                txn.order.sender,
-                -margin
-            );
-            spotEngine.updateBalance(
-                QUOTE_PRODUCT_ID,
                 newIsolatedSubaccount,
                 margin
             );
         }
+
+        require(isHealthy(txn.order.sender), ERR_SUBACCT_HEALTH);
 
         return newIsolatedSubaccount;
     }
