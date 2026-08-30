@@ -506,7 +506,7 @@ contract Clearinghouse is
             ERR_UNLOCKED_NLP_INSUFFICIENT
         );
         int128 quoteAmount = nlpAmount.mul(oraclePriceX18);
-        int128 burnFee = MathHelper.max(ONE, quoteAmount / 1000);
+        int128 burnFee = quoteAmount / 1000;
         quoteAmount = MathHelper.max(0, quoteAmount - burnFee);
 
         _validateNlpRebalance(nlpPools, nlpPoolRebalanceX18, -quoteAmount);
