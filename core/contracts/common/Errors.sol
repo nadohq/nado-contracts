@@ -117,6 +117,9 @@ string constant ERR_SLOW_MODE_WRONG_SENDER = "SMWS";
 
 // Not enough gas to guarantee a slow-mode tx its full budget
 string constant ERR_INSUFFICIENT_GAS = "IG";
+
+// Slow-mode payload larger than a non-owner may enqueue
+string constant ERR_SLOW_MODE_TX_TOO_LARGE = "SMTL";
 string constant ERR_WRONG_NONCE = "WN";
 
 // initially wanted to call this
