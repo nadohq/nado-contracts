@@ -60,6 +60,24 @@ uint256 constant SLOW_MODE_GAS_BUDGET = 8_000_000;
 
 uint256 constant SLOW_MODE_GAS_BUFFER = 100_000;
 
+// Largest slow-mode payload a non-owner may enqueue.
+//
+// Clearing an entry off the queue head costs ~79 gas per stored byte *plus*
+// SLOW_MODE_GAS_BUDGET, and the budget is demanded after the entry has been
+// read, while writing the entry costs about the same per byte and carries no
+// such reserve. Above ~114kB the two diverge: the entry is writable in one
+// transaction and clearable in none. Since txUpTo only ever advances by
+// consuming the head (_executeSlowModeTransaction), such an entry becomes a
+// permanent head and freezes the queue for everyone.
+//
+// Every slow-mode type reachable without owner rights is fixed-size --
+// WithdrawCollateral is the largest at 129 bytes -- so this only has to leave
+// room for a field to be added to one of them. Owner-submitted entries are
+// exempt because DelistProduct carries one word per position holder; those are
+// bounded by SLOW_MODE_GAS_BUDGET at ~337 holders instead, and have to be
+// chunked by the caller. Measured by contracts-test/test/SlowModeTxSizeCap.t.sol.
+uint256 constant MAX_USER_SLOW_MODE_TX_BYTES = 256;
+
 uint64 constant NLP_LOCK_PERIOD = 4 * 24 * 60 * 60; // 4 days
 
 int128 constant INF = type(int128).max / 128;

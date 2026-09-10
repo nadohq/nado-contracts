@@ -340,6 +340,19 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
 
         address sender = msg.sender;
 
+        // An entry too large to clear off the queue head would freeze the
+        // queue permanently, so bound everything a non-owner can enqueue.
+        // Checked here rather than per branch so that a future
+        // non-owner-reachable type is covered by construction. The owner is
+        // exempt: DelistProduct carries one word per position holder and is
+        // bounded by SLOW_MODE_GAS_BUDGET instead.
+        if (sender != owner()) {
+            require(
+                transaction.length <= MAX_USER_SLOW_MODE_TX_BYTES,
+                ERR_SLOW_MODE_TX_TOO_LARGE
+            );
+        }
+
         if (txType == IEndpoint.TransactionType.DepositCollateral) {
             revert();
         } else if (txType == IEndpoint.TransactionType.DepositInsurance) {
