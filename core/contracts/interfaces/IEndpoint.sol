@@ -43,7 +43,9 @@ interface IEndpoint {
         ClaimBuilderFee,
         WithdrawCollateralV2,
         ForceRebalanceNlpPool,
-        NlpProfitShare
+        NlpProfitShare,
+        Deleverage,
+        TransferQuoteV2
     }
 
     enum LiquidationMode {
@@ -318,6 +320,12 @@ interface IEndpoint {
         bytes signature;
     }
 
+    struct SignedTransferQuoteV2 {
+        TransferQuote tx;
+        CompactSignature signature;
+        int128 feeX18;
+    }
+
     struct CreateIsolatedSubaccount {
         Order order;
         uint32 productId;
@@ -333,6 +341,14 @@ interface IEndpoint {
         bytes32 subaccount;
         address owner;
         uint128 balanceWeightX18;
+    }
+
+    struct Deleverage {
+        bytes32 subaccount;
+        bytes32 counterparty;
+        uint32 productId;
+        int128 amount;
+        int128 priceX18;
     }
 
     function depositCollateral(

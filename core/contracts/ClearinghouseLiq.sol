@@ -661,4 +661,75 @@ contract ClearinghouseLiq is
         // cover the quote balance from the insurance fund at the end
         _handleLiquidationPayment(txn, spotEngine, perpEngine);
     }
+
+    function deleverageImpl(IEndpoint.Deleverage calldata txn) external {
+        require(txn.subaccount != txn.counterparty, ERR_INVALID_DELEVERAGE);
+
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+        require(
+            address(productToEngine[txn.productId]) == address(perpEngine),
+            ERR_INVALID_DELEVERAGE
+        );
+
+        IPerpEngine.Balance memory subBalance = perpEngine.getBalance(
+            txn.productId,
+            txn.subaccount
+        );
+        IPerpEngine.Balance memory cpBalance = perpEngine.getBalance(
+            txn.productId,
+            txn.counterparty
+        );
+
+        int128 subAmount = subBalance.amount;
+        int128 cpAmount = cpBalance.amount;
+        int128 amount = txn.amount;
+
+        require(
+            subAmount != 0 && cpAmount != 0 && amount != 0,
+            ERR_INVALID_DELEVERAGE
+        );
+        if (amount > 0) {
+            require(
+                subAmount > 0 && amount <= subAmount,
+                ERR_INVALID_DELEVERAGE
+            );
+            require(
+                cpAmount < 0 && amount <= -cpAmount,
+                ERR_INVALID_DELEVERAGE
+            );
+        } else {
+            require(
+                subAmount < 0 && amount >= subAmount,
+                ERR_INVALID_DELEVERAGE
+            );
+            require(
+                cpAmount > 0 && amount >= -cpAmount,
+                ERR_INVALID_DELEVERAGE
+            );
+        }
+
+        int128 payment = txn.priceX18.mul(amount);
+        perpEngine.updateBalance(
+            txn.productId,
+            txn.subaccount,
+            -amount,
+            payment
+        );
+        perpEngine.updateBalance(
+            txn.productId,
+            txn.counterparty,
+            amount,
+            -payment
+        );
+        emit Liquidation(
+            txn.counterparty,
+            txn.subaccount,
+            txn.productId,
+            false,
+            amount,
+            payment
+        );
+    }
 }

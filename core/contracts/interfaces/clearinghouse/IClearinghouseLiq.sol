@@ -9,4 +9,6 @@ import "../IEndpointGated.sol";
 interface IClearinghouseLiq is IClearinghouseEventEmitter, IEndpointGated {
     function liquidateSubaccountImpl(IEndpoint.LiquidateSubaccount calldata tx)
         external;
+
+    function deleverageImpl(IEndpoint.Deleverage calldata tx) external;
 }
