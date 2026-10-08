@@ -64,6 +64,8 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
 
+    function deleverage(IEndpoint.Deleverage calldata tx) external;
+
     function depositInsurance(bytes calldata transaction) external;
 
     function withdrawInsurance(bytes calldata transaction, uint64 idx) external;

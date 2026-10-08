@@ -463,6 +463,20 @@ contract Verifier is
                     signedTx.tx.nonce
                 )
             );
+        } else if (txType == IEndpoint.TransactionType.TransferQuoteV2) {
+            IEndpoint.SignedTransferQuoteV2 memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedTransferQuoteV2)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(TRANSFER_QUOTE_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.recipient,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            );
         } else if (txType == IEndpoint.TransactionType.TransferQuote) {
             IEndpoint.SignedTransferQuote memory signedTx = abi.decode(
                 transactionBody,

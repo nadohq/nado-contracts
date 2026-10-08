@@ -146,3 +146,5 @@ string constant ERR_UNLOCKED_NLP_INSUFFICIENT = "UNI";
 string constant ERR_PRODUCT_NOT_MATCH = "PNM";
 
 string constant ERR_INVALID_BUILDER = "IB";
+
+string constant ERR_INVALID_DELEVERAGE = "ID";

@@ -46,6 +46,13 @@ abstract contract BaseWithdrawPool is
 
     uint64 public minIdx;
 
+    event WithdrawalTransferFailed(
+        uint64 indexed idx,
+        address token,
+        address sendTo,
+        uint128 amount
+    );
+
     function resolveFastWithdrawal(bytes calldata transaction)
         internal
         pure
@@ -145,7 +152,13 @@ abstract contract BaseWithdrawPool is
             return;
         }
 
-        handleWithdrawTransfer(token, sendTo, amount);
+        // a failed transfer (e.g. blacklisted sendTo) must not revert the sequencer batch
+        (bool success, bytes memory data) = address(token).call(
+            abi.encodeWithSelector(IERC20Base.transfer.selector, sendTo, amount)
+        );
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) {
+            emit WithdrawalTransferFailed(idx, address(token), sendTo, amount);
+        }
     }
 
     function fastWithdrawalFeeAmount(

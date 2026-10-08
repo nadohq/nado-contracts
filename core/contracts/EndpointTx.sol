@@ -423,6 +423,12 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 }
             }
             clearinghouse.liquidateSubaccount(signedTx.tx);
+        } else if (txType == IEndpoint.TransactionType.Deleverage) {
+            IEndpoint.Deleverage memory txn = abi.decode(
+                transaction[1:],
+                (IEndpoint.Deleverage)
+            );
+            clearinghouse.deleverage(txn);
         } else if (txType == IEndpoint.TransactionType.WithdrawCollateral) {
             IEndpoint.SignedWithdrawCollateral memory signedTx = abi.decode(
                 transaction[1:],
@@ -603,6 +609,27 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
             );
         } else if (txType == IEndpoint.TransactionType.UpdateFeeTier) {
             clearinghouse.updateFeeTier(transaction);
+        } else if (txType == IEndpoint.TransactionType.TransferQuoteV2) {
+            IEndpoint.SignedTransferQuoteV2 memory signedTx = abi.decode(
+                transaction[1:],
+                (IEndpoint.SignedTransferQuoteV2)
+            );
+            _recordSubaccount(signedTx.tx.recipient);
+            validateSignedTx(
+                signedTx.tx.sender,
+                signedTx.tx.nonce,
+                transaction,
+                signedTx.signature,
+                true
+            );
+            int128 cap = (RiskHelper.isIsolatedSubaccount(
+                signedTx.tx.recipient
+            ) || RiskHelper.isIsolatedSubaccount(signedTx.tx.sender))
+                ? HEALTHCHECK_FEE / 10
+                : HEALTHCHECK_FEE;
+            require(signedTx.feeX18 >= 0 && signedTx.feeX18 <= cap);
+            chargeFee(signedTx.tx.sender, signedTx.feeX18);
+            clearinghouse.transferQuote(signedTx.tx);
         } else if (txType == IEndpoint.TransactionType.TransferQuote) {
             IEndpoint.SignedTransferQuote memory signedTx = abi.decode(
                 transaction[1:],

@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import "./common/Constants.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
+import "./interfaces/clearinghouse/IClearinghouseLiq.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IOffchainExchange.sol";
@@ -652,17 +653,27 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
-        bytes4 liquidateSubaccountSelector = bytes4(
-            keccak256(
-                "liquidateSubaccountImpl((bytes32,bytes32,uint32,bool,int128,uint64))"
-            )
-        );
         bytes memory liquidateSubaccountCall = abi.encodeWithSelector(
-            liquidateSubaccountSelector,
+            IClearinghouseLiq.liquidateSubaccountImpl.selector,
             txn
         );
         (bool success, bytes memory result) = clearinghouseLiq.delegatecall(
             liquidateSubaccountCall
+        );
+        require(success, string(result));
+    }
+
+    function deleverage(IEndpoint.Deleverage calldata txn)
+        external
+        virtual
+        onlyEndpoint
+    {
+        bytes memory deleverageCall = abi.encodeWithSelector(
+            IClearinghouseLiq.deleverageImpl.selector,
+            txn
+        );
+        (bool success, bytes memory result) = clearinghouseLiq.delegatecall(
+            deleverageCall
         );
         require(success, string(result));
     }
