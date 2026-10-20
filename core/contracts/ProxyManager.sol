@@ -34,6 +34,8 @@ contract ProxyManager is BaseProxyManager {
             impl = _getClearinghouseLiqImpl();
         } else if (_isEqual(name, ENDPOINT_TX)) {
             impl = _getEndpointTxImpl();
+        } else if (_isEqual(name, CONTRACT_OWNER_EXT)) {
+            impl = _getContractOwnerExtImpl();
         } else {
             impl = _getImpl(proxy);
         }
@@ -67,6 +69,15 @@ contract ProxyManager is BaseProxyManager {
             pendingImpls[ENDPOINT_TX] = endpointTx;
             pendingHashes[ENDPOINT_TX] = _getCodeHash(endpointTx.code);
             codeHashes[ENDPOINT_TX] = pendingHashes[ENDPOINT_TX];
+        } else if (_isEqual(name, CONTRACT_OWNER)) {
+            proxyManagerHelper.registerContractOwner(proxy);
+            address contractOwnerExt = _getContractOwnerExtImpl();
+            require(contractOwnerExt != address(0), "ContractOwnerExt not set");
+            pendingImpls[CONTRACT_OWNER_EXT] = contractOwnerExt;
+            pendingHashes[CONTRACT_OWNER_EXT] = _getCodeHash(
+                contractOwnerExt.code
+            );
+            codeHashes[CONTRACT_OWNER_EXT] = pendingHashes[CONTRACT_OWNER_EXT];
         }
     }
 }

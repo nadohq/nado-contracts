@@ -23,12 +23,19 @@ interface IIEndpointUpgradeable {
     function upgradeEndpointTx(address _endpointTx) external;
 }
 
+interface IIContractOwner {
+    function getContractOwnerExt() external view returns (address);
+
+    function upgradeContractOwnerExt(address _contractOwnerExt) external;
+}
+
 // ProxyAdmin cannot access to any functions of the implementation of a proxy,
 // so we have to create a helper contract to help us visit impl functions.
 contract ProxyManagerHelper {
     address internal proxyManager;
     address internal clearinghouse;
     address internal endpoint;
+    address internal contractOwner;
 
     modifier onlyOwner() {
         require(
@@ -70,6 +77,23 @@ contract ProxyManagerHelper {
     function upgradeEndpointTx(address _endpointTx) external onlyOwner {
         IIEndpointUpgradeable(endpoint).upgradeEndpointTx(_endpointTx);
     }
+
+    function registerContractOwner(address _contractOwner) external onlyOwner {
+        contractOwner = _contractOwner;
+    }
+
+    function getContractOwnerExt() external view returns (address) {
+        return IIContractOwner(contractOwner).getContractOwnerExt();
+    }
+
+    function upgradeContractOwnerExt(address _contractOwnerExt)
+        external
+        onlyOwner
+    {
+        IIContractOwner(contractOwner).upgradeContractOwnerExt(
+            _contractOwnerExt
+        );
+    }
 }
 
 abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
@@ -77,6 +101,8 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
     string internal constant CLEARINGHOUSE_LIQ = "ClearinghouseLiq";
     string internal constant ENDPOINT = "Endpoint";
     string internal constant ENDPOINT_TX = "EndpointTx";
+    string internal constant CONTRACT_OWNER = "ContractOwner";
+    string internal constant CONTRACT_OWNER_EXT = "ContractOwnerExt";
 
     address public submitter;
     ProxyManagerHelper internal proxyManagerHelper;
@@ -108,12 +134,19 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
 
     // tmp function
     function refreshProxyManagerHelper() external onlyOwner {
+        _refreshProxyManagerHelper();
+    }
+
+    function _refreshProxyManagerHelper() internal {
         ProxyManagerHelper newHelper = new ProxyManagerHelper();
         if (_isClearinghouseRegistered()) {
             newHelper.registerClearinghouse(proxies[CLEARINGHOUSE]);
         }
         if (_isEndpointRegistered()) {
             newHelper.registerEndpoint(proxies[ENDPOINT]);
+        }
+        if (_isContractOwnerRegistered()) {
+            newHelper.registerContractOwner(proxies[CONTRACT_OWNER]);
         }
         proxyManagerHelper = newHelper;
     }
@@ -138,6 +171,42 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
         pendingImpls[ENDPOINT_TX] = _endpointTx;
         pendingHashes[ENDPOINT_TX] = actualCodeHash;
         codeHashes[ENDPOINT_TX] = actualCodeHash;
+    }
+
+    // tmp function: records the first ContractOwnerExt on chains that
+    // registered ContractOwner before it existed (test, prod). Delete it once
+    // both have run it; fresh deploys pass the delegate to
+    // ContractOwner.initialize and `registerRegularProxy` records it.
+    // Reinitializer to version 3. Replaces the helper first: one deployed by
+    // an older ProxyManager cannot reach ContractOwner.
+    function bootstrapContractOwnerExt(
+        address _contractOwnerExt,
+        bytes32 expectedCodeHash
+    ) external onlyOwner reinitializer(3) {
+        require(_isContractOwnerRegistered(), "ContractOwner not registered");
+        require(_contractOwnerExt != address(0), "ContractOwnerExt is zero");
+        require(
+            _contractOwnerExt.code.length > 0,
+            "ContractOwnerExt has no code"
+        );
+
+        bytes32 actualCodeHash = _getCodeHash(_contractOwnerExt.code);
+        require(
+            actualCodeHash == expectedCodeHash,
+            "ContractOwnerExt hash mismatch"
+        );
+
+        _refreshProxyManagerHelper();
+        require(
+            _getContractOwnerExtImpl() == address(0),
+            "ContractOwnerExt already set"
+        );
+
+        proxyManagerHelper.upgradeContractOwnerExt(_contractOwnerExt);
+
+        pendingImpls[CONTRACT_OWNER_EXT] = _contractOwnerExt;
+        pendingHashes[CONTRACT_OWNER_EXT] = actualCodeHash;
+        codeHashes[CONTRACT_OWNER_EXT] = actualCodeHash;
     }
 
     function _getSlice(
@@ -188,6 +257,8 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
                 _migrateClearinghouseLiq(newImpls[i]);
             } else if (_isEqual(newImpls[i].name, ENDPOINT_TX)) {
                 _migrateEndpointTx(newImpls[i]);
+            } else if (_isEqual(newImpls[i].name, CONTRACT_OWNER_EXT)) {
+                _migrateContractOwnerExt(newImpls[i]);
             } else {
                 _migrateRegularProxy(newImpls[i]);
             }
@@ -230,6 +301,13 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
                 return true;
             }
         }
+        if (_isContractOwnerExtBootstrapped()) {
+            if (
+                _getContractOwnerExtImpl() != pendingImpls[CONTRACT_OWNER_EXT]
+            ) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -255,6 +333,10 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
 
     function _getEndpointTxImpl() internal view returns (address) {
         return proxyManagerHelper.getEndpointTx();
+    }
+
+    function _getContractOwnerExtImpl() internal view returns (address) {
+        return proxyManagerHelper.getContractOwnerExt();
     }
 
     function _validateImpl(address currentImpl, NewImpl calldata newImpl)
@@ -300,11 +382,32 @@ abstract contract BaseProxyManager is DeployerGuard, OwnableUpgradeable {
         proxyManagerHelper.upgradeEndpointTx(newImpl.impl);
     }
 
+    function _migrateContractOwnerExt(NewImpl calldata newImpl) internal {
+        require(
+            _isContractOwnerExtBootstrapped(),
+            "ContractOwnerExt hasn't been bootstrapped."
+        );
+        _validateImpl(_getContractOwnerExtImpl(), newImpl);
+        proxyManagerHelper.upgradeContractOwnerExt(newImpl.impl);
+    }
+
     function _isClearinghouseRegistered() internal view returns (bool) {
         return proxies[CLEARINGHOUSE] != address(0);
     }
 
     function _isEndpointRegistered() internal view returns (bool) {
         return proxies[ENDPOINT] != address(0);
+    }
+
+    function _isContractOwnerRegistered() internal view returns (bool) {
+        return proxies[CONTRACT_OWNER] != address(0);
+    }
+
+    // a ContractOwner registered before ContractOwnerExt existed has no
+    // delegate on record until `bootstrapContractOwnerExt`, and until then
+    // nothing asks the helper for it; with the bootstrap gone this is
+    // `_isContractOwnerRegistered()`
+    function _isContractOwnerExtBootstrapped() internal view returns (bool) {
+        return pendingImpls[CONTRACT_OWNER_EXT] != address(0);
     }
 }

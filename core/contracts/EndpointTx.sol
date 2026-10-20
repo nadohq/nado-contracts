@@ -76,6 +76,158 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
         );
     }
 
+    function venueVaultSubaccount(uint32 venueId)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return bytes32((uint256(3) << 32) | uint256(venueId));
+    }
+
+    function isVenueVault(bytes32 subaccount) internal pure returns (bool) {
+        return (uint256(subaccount) >> 32) == 3;
+    }
+
+    function updateVenue(uint32 venueId, address operator) private {
+        require(venueId != 0, ERR_UNAUTHORIZED);
+        if (venues.length == 0) {
+            // Slot 0 is core so that venueId == array index.
+            venues.push(
+                IEndpoint.Venue({
+                    venueId: 0,
+                    subaccount: bytes32(0),
+                    operator: address(0)
+                })
+            );
+        }
+        if (venueId == venues.length) {
+            bytes32 vault = venueVaultSubaccount(venueId);
+            _recordSubaccount(vault);
+            venues.push(
+                IEndpoint.Venue({
+                    venueId: venueId,
+                    subaccount: vault,
+                    operator: operator
+                })
+            );
+        } else {
+            require(venueId < venues.length, ERR_UNAUTHORIZED);
+            venues[venueId].operator = operator;
+        }
+    }
+
+    function getRegisteredVenue(uint32 venueId)
+        internal
+        view
+        returns (IEndpoint.Venue memory venue)
+    {
+        require(
+            venueId != 0 && venueId < venues.length,
+            ERR_VENUE_NOT_REGISTERED
+        );
+        venue = venues[venueId];
+        require(venue.operator != address(0), ERR_VENUE_NOT_REGISTERED);
+    }
+
+    function venueTransferBalance(
+        bytes32 from,
+        bytes32 to,
+        uint128 amount
+    ) internal {
+        require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        int128 toTransfer = int128(amount);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, from, -toTransfer);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, to, toTransfer);
+        // Same rule as Clearinghouse._isAboveInitial: a depositing user cannot
+        // strip margin below initial, and a vault (quote-only) cannot overdraw.
+        require(
+            clearinghouse.getHealth(from, IProductEngine.HealthType.INITIAL) >=
+                0,
+            ERR_SUBACCT_HEALTH
+        );
+    }
+
+    function executeVenueDeposit(bytes calldata transaction) internal {
+        IEndpoint.SignedVenueDeposit memory signedTx = abi.decode(
+            transaction[1:],
+            (IEndpoint.SignedVenueDeposit)
+        );
+        IEndpoint.VenueDeposit memory txn = signedTx.tx;
+        require(txn.productId == QUOTE_PRODUCT_ID, ERR_INVALID_PRODUCT);
+        require(!isVenueVault(txn.sender), ERR_UNAUTHORIZED);
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+        IEndpoint.Venue memory venue = getRegisteredVenue(txn.venueId);
+
+        validateFee(signedTx.feeX18, txn.productId);
+        // No sanction check here: the sanctions oracle mutates outside the
+        // engine's fork, so an in-contract check would desync engine and
+        // chain; the gateway screens instead.
+        validateSignedTx(
+            txn.sender,
+            txn.nonce,
+            transaction,
+            signedTx.signature,
+            true
+        );
+        chargeFee(txn.sender, signedTx.feeX18, txn.productId);
+        _recordSubaccount(venue.subaccount);
+        venueTransferBalance(txn.sender, venue.subaccount, txn.amount);
+    }
+
+    function executeVenueTransfer(bytes calldata transaction) internal {
+        IEndpoint.SignedVenueTransfer memory signedTx = abi.decode(
+            transaction[1:],
+            (IEndpoint.SignedVenueTransfer)
+        );
+        IEndpoint.VenueTransfer memory txn = signedTx.tx;
+        require(txn.productId == QUOTE_PRODUCT_ID, ERR_INVALID_PRODUCT);
+        require(txn.fromVenueId != txn.toVenueId, ERR_UNAUTHORIZED);
+        // v1 gate: transfers may only target core; lift to enable direct
+        // venue<->venue.
+        require(txn.toVenueId == 0, ERR_UNAUTHORIZED);
+
+        IEndpoint.Venue memory venue = getRegisteredVenue(txn.fromVenueId);
+        // The tx carries no sender: the recovered signer must be the from
+        // venue's registered operator, which also keys the nonce stream.
+        // Funds move from the registry vault and the fee follows the funds.
+        bytes32 operator = bytes32(bytes20(venue.operator));
+        validateFee(signedTx.feeX18, txn.productId);
+        validateNonce(operator, txn.nonce);
+        validateCompactSignature(
+            operator,
+            _hashTypedDataV4(
+                computeDigest(
+                    IEndpoint.TransactionType(uint8(transaction[0])),
+                    transaction[1:]
+                )
+            ),
+            signedTx.signature,
+            false
+        );
+
+        bytes32 to;
+        if (txn.toVenueId == 0) {
+            to = txn.recipient;
+            require(!isVenueVault(to), ERR_UNAUTHORIZED);
+            require(!RiskHelper.isIsolatedSubaccount(to), ERR_UNAUTHORIZED);
+        } else {
+            to = getRegisteredVenue(txn.toVenueId).subaccount;
+        }
+        _recordSubaccount(to);
+        // The fee comes out of the transferred amount: the vault must pay
+        // exactly what the venue's ledger debited, or the venue's local vault
+        // mirror drifts by engine-decided fees; the recipient bears the fee.
+        require(uint128(signedTx.feeX18) < txn.amount, ERR_FEE_EXCEEDS_AMOUNT);
+        venueTransferBalance(venue.subaccount, to, txn.amount);
+        chargeFee(to, signedTx.feeX18, txn.productId);
+    }
+
+    function validateFee(int128 feeX18, uint32 productId) internal view {
+        int128 currentFeeX18 = spotEngine.getConfig(productId).withdrawFeeX18;
+        require(feeX18 >= 0);
+        require(feeX18 <= currentFeeX18);
+    }
+
     function computeDigest(
         IEndpoint.TransactionType txType,
         bytes calldata transactionBody
@@ -324,6 +476,12 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 txn.sender,
                 txn.builderId
             );
+        } else if (txType == IEndpoint.TransactionType.UpdateVenue) {
+            IEndpoint.UpdateVenue memory txn = abi.decode(
+                transaction[1:],
+                (IEndpoint.UpdateVenue)
+            );
+            updateVenue(txn.venueId, txn.operator);
         } else {
             revert();
         }
@@ -376,7 +534,8 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
             txType == IEndpoint.TransactionType.DeleteNlpPool ||
             txType == IEndpoint.TransactionType.ForceRebalanceNlpPool ||
             txType == IEndpoint.TransactionType.NlpProfitShare ||
-            txType == IEndpoint.TransactionType.UpdateBuilder
+            txType == IEndpoint.TransactionType.UpdateBuilder ||
+            txType == IEndpoint.TransactionType.UpdateVenue
         ) {
             require(sender == owner());
         } else {
@@ -482,6 +641,10 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
                 signedTx.tx.sendTo,
                 nSubmissions
             );
+        } else if (txType == IEndpoint.TransactionType.VenueDeposit) {
+            executeVenueDeposit(transaction);
+        } else if (txType == IEndpoint.TransactionType.VenueTransfer) {
+            executeVenueTransfer(transaction);
         } else if (txType == IEndpoint.TransactionType.SpotTick) {
             IEndpoint.SpotTick memory txn = abi.decode(
                 transaction[1:],

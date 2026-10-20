@@ -45,7 +45,10 @@ interface IEndpoint {
         ForceRebalanceNlpPool,
         NlpProfitShare,
         Deleverage,
-        TransferQuoteV2
+        TransferQuoteV2,
+        VenueDeposit,
+        VenueTransfer,
+        UpdateVenue
     }
 
     enum LiquidationMode {
@@ -324,6 +327,49 @@ interface IEndpoint {
         TransferQuote tx;
         CompactSignature signature;
         int128 feeX18;
+    }
+
+    struct VenueDeposit {
+        bytes32 sender;
+        uint32 venueId;
+        bytes32 recipient;
+        uint32 productId;
+        uint128 amount;
+        uint64 nonce;
+        uint128 appendix; // Reserved for forward-compatible deposit features.
+    }
+
+    struct SignedVenueDeposit {
+        VenueDeposit tx;
+        CompactSignature signature;
+        int128 feeX18;
+    }
+
+    struct VenueTransfer {
+        uint32 fromVenueId;
+        uint32 toVenueId;
+        bytes32 recipient;
+        uint32 productId;
+        uint128 amount;
+        uint64 nonce;
+        uint128 appendix; // Reserved for forward-compatible transfer features.
+    }
+
+    struct SignedVenueTransfer {
+        VenueTransfer tx;
+        CompactSignature signature;
+        int128 feeX18;
+    }
+
+    struct UpdateVenue {
+        uint32 venueId;
+        address operator;
+    }
+
+    struct Venue {
+        uint32 venueId;
+        bytes32 subaccount;
+        address operator;
     }
 
     struct CreateIsolatedSubaccount {
