@@ -464,4 +464,15 @@ contract Endpoint is
     function getNonce(address sender) external view returns (uint64) {
         return nonces[sender];
     }
+
+    function getVenues() external view returns (Venue[] memory) {
+        return venues;
+    }
+
+    function getVenueOperator(uint32 venueId) external view returns (address) {
+        if (venueId >= venues.length) {
+            return address(0);
+        }
+        return venues[venueId].operator;
+    }
 }

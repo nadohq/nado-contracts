@@ -39,6 +39,24 @@
       "inputs": [
         {
           "internalType": "address",
+          "name": "_contractOwnerExt",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "expectedCodeHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "bootstrapContractOwnerExt",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
           "name": "_endpointTx",
           "type": "address"
         },

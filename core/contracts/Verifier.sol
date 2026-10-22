@@ -32,6 +32,12 @@ contract Verifier is
         "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
     string internal constant WITHDRAW_COLLATERAL_V2_SIGNATURE =
         "WithdrawCollateralV2(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce,address sendTo,uint128 appendix)";
+
+    string internal constant VENUE_DEPOSIT_SIGNATURE =
+        "VenueDeposit(bytes32 sender,uint32 venueId,bytes32 recipient,uint32 productId,uint128 amount,uint64 nonce,uint128 appendix)";
+
+    string internal constant VENUE_TRANSFER_SIGNATURE =
+        "VenueTransfer(uint32 fromVenueId,uint32 toVenueId,bytes32 recipient,uint32 productId,uint128 amount,uint64 nonce,uint128 appendix)";
     string internal constant MINT_NLP_SIGNATURE =
         "MintNlp(bytes32 sender,uint128 quoteAmount,uint64 nonce)";
     string internal constant BURN_NLP_SIGNATURE =
@@ -489,6 +495,40 @@ contract Verifier is
                     signedTx.tx.recipient,
                     signedTx.tx.amount,
                     signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.VenueDeposit) {
+            IEndpoint.SignedVenueDeposit memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedVenueDeposit)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(VENUE_DEPOSIT_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.venueId,
+                    signedTx.tx.recipient,
+                    signedTx.tx.productId,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce,
+                    signedTx.tx.appendix
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.VenueTransfer) {
+            IEndpoint.SignedVenueTransfer memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedVenueTransfer)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(VENUE_TRANSFER_SIGNATURE)),
+                    signedTx.tx.fromVenueId,
+                    signedTx.tx.toVenueId,
+                    signedTx.tx.recipient,
+                    signedTx.tx.productId,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce,
+                    signedTx.tx.appendix
                 )
             );
         } else {

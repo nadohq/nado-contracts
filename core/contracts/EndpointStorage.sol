@@ -64,6 +64,8 @@ abstract contract EndpointStorage {
 
     address internal endpointTx;
 
+    IEndpoint.Venue[] public venues;
+
     function _recordSubaccount(bytes32 subaccount) internal {
         if (subaccountIds[subaccount] == 0) {
             subaccountIds[subaccount] = ++numSubaccounts;

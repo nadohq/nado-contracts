@@ -81,6 +81,35 @@
       ],
       "stateMutability": "view",
       "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "venues",
+      "outputs": [
+        {
+          "internalType": "uint32",
+          "name": "venueId",
+          "type": "uint32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "subaccount",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
     }
   ],
   "bytecode": "0x",
