@@ -10,6 +10,7 @@ import "./interfaces/IERC20Base.sol";
 import "./common/Constants.sol";
 import "./common/Errors.sol";
 import "./libraries/ERC20Helper.sol";
+import "./libraries/MatchOrdersV2Helper.sol";
 
 contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
     using ERC20Helper for IERC20Base;
@@ -556,6 +557,28 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
         slowModeConfig = _slowModeConfig;
     }
 
+    function _matchOrders(
+        IEndpoint.MatchOrders memory txn,
+        int128 takerAmountDelta,
+        bool isOtc
+    ) internal {
+        requireSubaccount(txn.taker.order.sender);
+        requireSubaccount(txn.maker.order.sender);
+        IOffchainExchange(offchainExchange).matchOrders(
+            IEndpoint.MatchOrdersWithSigner({
+                matchOrders: txn,
+                takerLinkedSigner: getLinkedSignerOrNlpSigner(
+                    txn.taker.order.sender
+                ),
+                makerLinkedSigner: getLinkedSignerOrNlpSigner(
+                    txn.maker.order.sender
+                ),
+                takerAmountDelta: takerAmountDelta,
+                isOtc: isOtc
+            })
+        );
+    }
+
     function processTransactionImpl(bytes calldata transaction) public {
         IEndpoint.TransactionType txType = IEndpoint.TransactionType(
             uint8(transaction[0])
@@ -675,44 +698,31 @@ contract EndpointTx is EIP712Upgradeable, OwnableUpgradeable, EndpointStorage {
         } else if (txType == IEndpoint.TransactionType.SettlePnl) {
             clearinghouse.settlePnl(transaction);
         } else if (txType == IEndpoint.TransactionType.MatchOrders) {
-            IEndpoint.MatchOrders memory txn = abi.decode(
-                transaction[1:],
-                (IEndpoint.MatchOrders)
+            _matchOrders(
+                abi.decode(transaction[1:], (IEndpoint.MatchOrders)),
+                0,
+                false
             );
-            requireSubaccount(txn.taker.order.sender);
-            requireSubaccount(txn.maker.order.sender);
-
-            IEndpoint.MatchOrdersWithSigner memory txnWithSigner = IEndpoint
-                .MatchOrdersWithSigner({
-                    matchOrders: txn,
-                    takerLinkedSigner: getLinkedSignerOrNlpSigner(
-                        txn.taker.order.sender
-                    ),
-                    makerLinkedSigner: getLinkedSignerOrNlpSigner(
-                        txn.maker.order.sender
-                    ),
-                    takerAmountDelta: 0
-                });
-            IOffchainExchange(offchainExchange).matchOrders(txnWithSigner);
         } else if (txType == IEndpoint.TransactionType.MatchOrdersWithAmount) {
             IEndpoint.MatchOrdersWithAmount memory txn = abi.decode(
                 transaction[1:],
                 (IEndpoint.MatchOrdersWithAmount)
             );
-            requireSubaccount(txn.matchOrders.taker.order.sender);
-            requireSubaccount(txn.matchOrders.maker.order.sender);
-            IEndpoint.MatchOrdersWithSigner memory txnWithSigner = IEndpoint
-                .MatchOrdersWithSigner({
-                    matchOrders: txn.matchOrders,
-                    takerLinkedSigner: getLinkedSignerOrNlpSigner(
-                        txn.matchOrders.taker.order.sender
-                    ),
-                    makerLinkedSigner: getLinkedSignerOrNlpSigner(
-                        txn.matchOrders.maker.order.sender
-                    ),
-                    takerAmountDelta: txn.takerAmountDelta
-                });
-            IOffchainExchange(offchainExchange).matchOrders(txnWithSigner);
+            _matchOrders(txn.matchOrders, txn.takerAmountDelta, false);
+        } else if (txType == IEndpoint.TransactionType.MatchOrdersV2) {
+            IEndpoint.MatchOrdersV2 memory txn = MatchOrdersV2Helper.decode(
+                transaction
+            );
+            require(txn.controlFlags & ~MATCH_FLAG_OTC == 0);
+            _matchOrders(
+                IEndpoint.MatchOrders({
+                    productId: txn.productId,
+                    taker: MatchOrdersV2Helper.toSignedOrder(txn.taker),
+                    maker: MatchOrdersV2Helper.toSignedOrder(txn.maker)
+                }),
+                txn.takerAmountDelta,
+                txn.controlFlags & MATCH_FLAG_OTC != 0
+            );
         } else if (txType == IEndpoint.TransactionType.MintNlp) {
             IEndpoint.SignedMintNlp memory signedTx = abi.decode(
                 transaction[1:],
