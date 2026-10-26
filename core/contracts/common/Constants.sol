@@ -49,6 +49,9 @@ uint96 constant MASK_6_BYTES = 0xFFFFFFFFFFFF000000000000;
 
 uint64 constant SLOW_MODE_TX_DELAY = 3 * 24 * 60 * 60; // 3 days
 
+// MatchOrdersV2.controlFlags bits. Unknown bits revert.
+uint64 constant MATCH_FLAG_OTC = 1; // OTC matches pay no protocol fee; builder fee still applies
+
 // Gas guaranteed to each slow-mode tx before it may be consumed as failed.
 // Deliberately a bytecode constant, not a config value: the engine replays
 // this code, and a storage-configured budget could desync engine and chain

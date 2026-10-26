@@ -48,7 +48,8 @@ interface IEndpoint {
         TransferQuoteV2,
         VenueDeposit,
         VenueTransfer,
-        UpdateVenue
+        UpdateVenue,
+        MatchOrdersV2
     }
 
     enum LiquidationMode {
@@ -288,11 +289,26 @@ interface IEndpoint {
         int128 takerAmountDelta;
     }
 
+    struct SignedOrderV2 {
+        Order order;
+        CompactSignature signature;
+    }
+
+    // on the wire this is a raw bytes32[11]; see MatchOrdersV2Helper
+    struct MatchOrdersV2 {
+        SignedOrderV2 taker;
+        SignedOrderV2 maker;
+        int128 takerAmountDelta;
+        uint32 productId;
+        uint64 controlFlags;
+    }
+
     struct MatchOrdersWithSigner {
         MatchOrders matchOrders;
         address takerLinkedSigner;
         address makerLinkedSigner;
         int128 takerAmountDelta;
+        bool isOtc;
     }
 
     struct DepositInsurance {

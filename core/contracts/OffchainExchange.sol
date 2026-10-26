@@ -515,7 +515,8 @@ contract OffchainExchange is
         MarketInfo memory market,
         int128 alreadyMatched, // in quote
         uint128 appendix,
-        bool taker
+        bool taker,
+        bool isOtc
     ) internal {
         // X account is passthrough for trading and incurs
         // no fees
@@ -555,6 +556,10 @@ contract OffchainExchange is
             appendix,
             taker
         );
+        // OTC matches pay no protocol fee; the builder fee below still applies
+        if (isOtc) {
+            feeInfo.feeRate = 0;
+        }
 
         int128 keepRateX18 = ONE - feeInfo.feeRate;
         int128 newMeteredQuote = (meteredQuote > 0)
@@ -782,7 +787,8 @@ contract OffchainExchange is
             market,
             -maker.order.priceX18.mul(filledAmounts[ordersInfo.taker.digest]),
             taker.order.appendix,
-            true
+            true,
+            txn.isOtc
         );
 
         // apply the maker fee
@@ -798,7 +804,8 @@ contract OffchainExchange is
                 market,
                 0, // alreadyMatched doesn't matter for a maker order
                 maker.order.appendix,
-                false
+                false,
+                txn.isOtc
             );
         }
 
