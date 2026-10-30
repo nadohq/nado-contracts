@@ -66,18 +66,48 @@ contract DirectDepositV1 is Ownable {
         require(success, "Failed to wrap native token.");
     }
 
+    function _callOptionalReturn(
+        IIERC20Base token,
+        bytes memory data,
+        string memory errMsg
+    ) private {
+        (bool success, bytes memory ret) = address(token).call(data);
+        require(
+            success && (ret.length == 0 || abi.decode(ret, (bool))),
+            errMsg
+        );
+    }
+
     function safeTransfer(
         IIERC20Base self,
         address to,
         uint256 amount
     ) internal {
-        (bool success, bytes memory data) = address(self).call(
-            abi.encodeWithSelector(IIERC20Base.transfer.selector, to, amount)
-        );
-        require(
-            success && (data.length == 0 || abi.decode(data, (bool))),
+        _callOptionalReturn(
+            self,
+            abi.encodeWithSelector(IIERC20Base.transfer.selector, to, amount),
             "Transfer failed"
         );
+    }
+
+    function safeApprove(
+        IIERC20Base self,
+        address spender,
+        uint256 amount
+    ) internal {
+        bytes memory data = abi.encodeWithSelector(
+            IIERC20Base.approve.selector,
+            spender,
+            amount
+        );
+        (bool success, bytes memory ret) = address(self).call(data);
+        if (!success || (ret.length != 0 && !abi.decode(ret, (bool)))) {
+            (bool successReset, ) = address(self).call(
+                abi.encodeWithSelector(IIERC20Base.approve.selector, spender, 0)
+            );
+            require(successReset, "Reset failed");
+            _callOptionalReturn(self, data, "Approve failed");
+        }
     }
 
     function creditDeposit() external {
@@ -89,7 +119,11 @@ contract DirectDepositV1 is Ownable {
             IIERC20Base token = IIERC20Base(tokenAddr);
             uint256 balance = token.balanceOf(address(this));
             if (balance != 0) {
-                token.approve(address(endpoint), balance);
+                require(
+                    balance <= type(uint128).max,
+                    "Deposit amount exceeds uint128"
+                );
+                safeApprove(token, address(endpoint), balance);
                 endpoint.depositCollateralWithReferral(
                     subaccount,
                     productId,
