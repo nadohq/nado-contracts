@@ -22,11 +22,17 @@ abstract contract EndpointGated is OwnableUpgradeable, IEndpointGated {
         return IEndpoint(endpoint).getTime();
     }
 
+    // A modifier body is inlined at every use site; routing it through one
+    // function keeps the revert string in the bytecode once.
     modifier onlyEndpoint() {
+        _checkEndpoint();
+        _;
+    }
+
+    function _checkEndpoint() internal view {
         require(
             msg.sender == endpoint,
             "SequencerGated: caller is not the endpoint"
         );
-        _;
     }
 }

@@ -43,6 +43,8 @@ int256 constant MIN_FIRST_DEPOSIT_AMOUNT = 5 * ONE; // $5
 
 uint32 constant MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS = 10;
 
+uint32 constant MAX_ORDER_SIGNERS = 15;
+
 uint32 constant NLP_PRODUCT_ID = 11;
 
 uint96 constant MASK_6_BYTES = 0xFFFFFFFFFFFF000000000000;
@@ -62,6 +64,10 @@ uint64 constant MATCH_FLAG_OTC = 1; // OTC matches pay no protocol fee; builder 
 uint256 constant SLOW_MODE_GAS_BUDGET = 8_000_000;
 
 uint256 constant SLOW_MODE_GAS_BUFFER = 100_000;
+
+// Products swept per DumpFeesV2 slow-mode tx (~95k gas each). The original
+// DumpFees sweeps every market at once and outgrew SLOW_MODE_GAS_BUDGET.
+uint256 constant DUMP_FEES_BATCH_SIZE = 40;
 
 // Largest slow-mode payload a non-owner may enqueue.
 //

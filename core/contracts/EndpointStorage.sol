@@ -47,7 +47,8 @@ abstract contract EndpointStorage {
 
     mapping(uint32 => int128) internal sequencerFee;
 
-    mapping(bytes32 => address) internal linkedSigners;
+    /// @custom:oz-retyped-from mapping(bytes32 => address)
+    mapping(bytes32 => IEndpoint.Signers) internal linkedSigners;
 
     mapping(bytes32 => address) internal nlpSigners;
     IEndpoint.NlpPool[] public nlpPools;

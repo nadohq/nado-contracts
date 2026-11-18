@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
+import "../common/Constants.sol";
 
 interface IEndpoint {
     event SubmitTransactions();
@@ -18,7 +19,7 @@ interface IEndpoint {
         MatchOrders,
         DepositInsurance,
         ExecuteSlowMode,
-        DumpFees,
+        DumpFees, // deprecated, replaced by DumpFeesV2; no longer submittable
         PerpTick,
         ManualAssert,
         UpdateProduct, // deprecated
@@ -36,7 +37,7 @@ interface IEndpoint {
         UpdateTierFeeRates,
         AddNlpPool,
         UpdateNlpPool,
-        DeleteNlpPool,
+        DeleteNlpPool, // deprecated, no longer submittable
         AssertProduct,
         CloseIsolatedSubaccount,
         UpdateBuilder,
@@ -49,7 +50,10 @@ interface IEndpoint {
         VenueDeposit,
         VenueTransfer,
         UpdateVenue,
-        MatchOrdersV2
+        MatchOrdersV2,
+        AddOrderSigner,
+        DeleteOrderSigner,
+        DumpFeesV2
     }
 
     enum LiquidationMode {
@@ -190,6 +194,34 @@ interface IEndpoint {
         bytes signature;
     }
 
+    struct Signers {
+        address linkedSigner;
+        uint32 orderSignerCount;
+        address[MAX_ORDER_SIGNERS] orderSigners;
+    }
+
+    struct AddOrderSigner {
+        bytes32 sender;
+        bytes32 signer;
+        uint64 nonce;
+    }
+
+    struct SignedAddOrderSigner {
+        AddOrderSigner tx;
+        bytes signature;
+    }
+
+    struct DeleteOrderSigner {
+        bytes32 sender;
+        bytes32 signer;
+        uint64 nonce;
+    }
+
+    struct SignedDeleteOrderSigner {
+        DeleteOrderSigner tx;
+        bytes signature;
+    }
+
     struct PerpTick {
         uint128 time;
         int128[] avgPriceDiffs;
@@ -313,6 +345,11 @@ interface IEndpoint {
 
     struct DepositInsurance {
         uint128 amount;
+    }
+
+    struct DumpFeesV2 {
+        uint32[] spotIds;
+        uint32[] perpIds;
     }
 
     struct SlowModeTx {
@@ -445,4 +482,23 @@ interface IEndpoint {
     function upgradeEndpointTx(address _endpointTx) external;
 
     function getEndpointTx() external view returns (address);
+
+    function isOrderSigner(bytes32 subaccount, address wallet)
+        external
+        view
+        returns (bool);
+
+    function addOrderSigner(bytes32 subaccount, address wallet) external;
+
+    function deleteOrderSigner(bytes32 subaccount, address wallet) external;
+
+    function addNlpPool(address owner, uint128 balanceWeightX18) external;
+
+    function updateNlpPool(
+        uint64 poolId,
+        address owner,
+        uint128 balanceWeightX18
+    ) external;
+
+    function deleteNlpPool(uint64 poolId) external;
 }

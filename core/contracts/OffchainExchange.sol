@@ -16,7 +16,6 @@ import "./common/Errors.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IEndpoint.sol";
-import {Endpoint} from "./Endpoint.sol";
 
 contract OffchainExchange is
     DeployerGuard,
@@ -339,10 +338,19 @@ contract OffchainExchange is
         bytes memory signature
     ) internal view virtual returns (bool) {
         address signer = ECDSA.recover(digest, signature);
-        return
-            (signer != address(0)) &&
-            (signer == address(uint160(bytes20(subaccount))) ||
-                signer == linkedSigner);
+        if (signer == address(0)) {
+            return false;
+        }
+        if (
+            signer == address(uint160(bytes20(subaccount))) ||
+            signer == linkedSigner
+        ) {
+            return true;
+        }
+        // Order signers are keyed by the parent, and `isOrderSigner` does not
+        // resolve isolated ids: callers must pass the signed order's sender,
+        // never the remapped isolated subaccount.
+        return IEndpoint(getEndpoint()).isOrderSigner(subaccount, signer);
     }
 
     function _expired(uint64 expiration) internal view returns (bool) {
@@ -414,7 +422,7 @@ contract OffchainExchange is
         CallState memory callState,
         MarketInfo memory,
         IEndpoint.SignedOrder memory signedOrder,
-        bytes32 orderDigest,
+        OrderInfo memory orderInfo,
         bool isTaker,
         address linkedSigner
     ) internal view returns (bool) {
@@ -435,7 +443,7 @@ contract OffchainExchange is
             }
         }
 
-        int128 filledAmount = filledAmounts[orderDigest];
+        int128 filledAmount = filledAmounts[orderInfo.digest];
         order.amount -= filledAmount;
 
         if (_isReduceOnly(order.appendix)) {
@@ -461,8 +469,8 @@ contract OffchainExchange is
             ((order.priceX18 > 0) || _isTWAP(order.appendix)) &&
             (signedOrder.order.sender == N_ACCOUNT ||
                 _checkSignature(
-                    order.sender,
-                    orderDigest,
+                    orderInfo.sender,
+                    orderInfo.digest,
                     linkedSigner,
                     signedOrder.signature
                 )) &&
@@ -696,7 +704,7 @@ contract OffchainExchange is
                 callState,
                 market,
                 taker,
-                ordersInfo.taker.digest,
+                ordersInfo.taker,
                 true,
                 txn.takerLinkedSigner
             ),
@@ -707,7 +715,7 @@ contract OffchainExchange is
                 callState,
                 market,
                 maker,
-                ordersInfo.maker.digest,
+                ordersInfo.maker,
                 false,
                 txn.makerLinkedSigner
             ),
@@ -904,12 +912,12 @@ contract OffchainExchange is
         }
     }
 
-    function dumpFees() external onlyEndpoint {
-        // loop over all spot and perp product ids
-        uint32[] memory productIds = spotEngine.getProductIds();
-
-        for (uint32 i = 1; i < productIds.length; i++) {
-            uint32 productId = productIds[i];
+    function dumpFees(uint32[] calldata spotIds, uint32[] calldata perpIds)
+        external
+        onlyEndpoint
+    {
+        for (uint256 i = 0; i < spotIds.length; i++) {
+            uint32 productId = spotIds[i];
             MarketInfoStore memory market = marketInfo[productId];
             if (market.collectedFees == 0) {
                 continue;
@@ -925,10 +933,8 @@ contract OffchainExchange is
             marketInfo[productId] = market;
         }
 
-        productIds = perpEngine.getProductIds();
-
-        for (uint32 i = 0; i < productIds.length; i++) {
-            uint32 productId = productIds[i];
+        for (uint256 i = 0; i < perpIds.length; i++) {
+            uint32 productId = perpIds[i];
             MarketInfoStore memory market = marketInfo[productId];
             if (market.collectedFees == 0) {
                 continue;

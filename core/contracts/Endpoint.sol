@@ -79,6 +79,13 @@ contract Endpoint is
         }
     }
 
+    // Entry points EndpointTx reaches through IEndpoint(address(this)) while
+    // running under delegatecall, plus the slow-mode self-call.
+    modifier onlySelf() {
+        require(msg.sender == address(this));
+        _;
+    }
+
     function _delegatecallEndpointTx(bytes memory callData)
         internal
         returns (bytes memory)
@@ -255,9 +262,7 @@ contract Endpoint is
     function processSlowModeTransaction(
         address sender,
         bytes calldata transaction
-    ) public virtual {
-        require(msg.sender == address(this));
-
+    ) public virtual onlySelf {
         _delegatecallEndpointTx(
             abi.encodeWithSelector(
                 EndpointTx.processSlowModeTransactionImpl.selector,
@@ -265,6 +270,128 @@ contract Endpoint is
                 transaction
             )
         );
+    }
+
+    function isOrderSigner(bytes32 subaccount, address wallet)
+        external
+        view
+        override
+        returns (bool)
+    {
+        return _isOrderSigner(subaccount, wallet);
+    }
+
+    function _isOrderSigner(bytes32 subaccount, address wallet)
+        internal
+        view
+        returns (bool)
+    {
+        return
+            wallet != address(0) &&
+            _findOrderSigner(linkedSigners[subaccount], wallet) <
+            MAX_ORDER_SIGNERS;
+    }
+
+    function _findOrderSigner(Signers storage signers, address wallet)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 count = signers.orderSignerCount;
+        for (uint256 i = 0; i < count; ++i) {
+            if (signers.orderSigners[i] == wallet) {
+                return i;
+            }
+        }
+        return MAX_ORDER_SIGNERS;
+    }
+
+    function addOrderSigner(bytes32 subaccount, address wallet)
+        external
+        override
+        onlySelf
+    {
+        require(
+            !RiskHelper.isIsolatedSubaccount(subaccount) &&
+                wallet != address(0) &&
+                !_isOrderSigner(subaccount, wallet),
+            ERR_INVALID_ORDER_SIGNER
+        );
+        Signers storage signers = linkedSigners[subaccount];
+        uint32 count = signers.orderSignerCount;
+        require(count < MAX_ORDER_SIGNERS, ERR_TOO_MANY_ORDER_SIGNERS);
+        signers.orderSigners[count] = wallet;
+        signers.orderSignerCount = count + 1;
+    }
+
+    function deleteOrderSigner(bytes32 subaccount, address wallet)
+        external
+        override
+        onlySelf
+    {
+        Signers storage signers = linkedSigners[subaccount];
+        uint256 idx = _findOrderSigner(signers, wallet);
+        uint256 last = signers.orderSignerCount;
+        require(wallet != address(0) && idx < last, ERR_ORDER_SIGNER_NOT_FOUND);
+        last -= 1;
+        signers.orderSigners[idx] = signers.orderSigners[last];
+        signers.orderSigners[last] = address(0);
+        signers.orderSignerCount = uint32(last);
+    }
+
+    function addNlpPool(address owner, uint128 balanceWeightX18)
+        external
+        override
+        onlySelf
+    {
+        uint64 poolId = uint64(nlpPools.length);
+
+        bytes32 subaccount = NLP_POOL_ACCOUNT_START;
+        if (nlpPools.length > 1) {
+            subaccount = bytes32(
+                uint256(nlpPools[nlpPools.length - 1].subaccount) + 1
+            );
+        }
+        _recordSubaccount(subaccount);
+
+        nlpPools.push(
+            NlpPool({
+                poolId: poolId,
+                subaccount: subaccount,
+                owner: owner,
+                balanceWeightX18: balanceWeightX18
+            })
+        );
+        nlpSigners[subaccount] = owner;
+    }
+
+    function updateNlpPool(
+        uint64 poolId,
+        address owner,
+        uint128 balanceWeightX18
+    ) external override onlySelf {
+        _updateNlpPool(poolId, owner, balanceWeightX18);
+    }
+
+    function deleteNlpPool(uint64 poolId) external override onlySelf {
+        require(poolId > 0 && poolId < nlpPools.length);
+        clearinghouse.clearNlpPoolPosition(nlpPools[poolId].subaccount);
+        _updateNlpPool(poolId, address(0), uint128(0));
+    }
+
+    function _updateNlpPool(
+        uint64 poolId,
+        address owner,
+        uint128 balanceWeightX18
+    ) internal {
+        require(poolId < nlpPools.length);
+        if (poolId == 0) {
+            require(owner == address(0));
+            require(balanceWeightX18 > 0);
+        }
+        nlpPools[poolId].owner = owner;
+        nlpPools[poolId].balanceWeightX18 = balanceWeightX18;
+        nlpSigners[nlpPools[poolId].subaccount] = owner;
     }
 
     function processTransaction(bytes calldata transaction) internal virtual {

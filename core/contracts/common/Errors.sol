@@ -150,3 +150,9 @@ string constant ERR_PRODUCT_NOT_MATCH = "PNM";
 string constant ERR_INVALID_BUILDER = "IB";
 
 string constant ERR_INVALID_DELEVERAGE = "ID";
+
+string constant ERR_TOO_MANY_ORDER_SIGNERS = "TMOS";
+
+string constant ERR_INVALID_ORDER_SIGNER = "IOS";
+
+string constant ERR_ORDER_SIGNER_NOT_FOUND = "OSNF";
