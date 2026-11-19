@@ -44,6 +44,10 @@ contract Verifier is
         "BurnNlp(bytes32 sender,uint128 nlpAmount,uint64 nonce)";
     string internal constant LINK_SIGNER_SIGNATURE =
         "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
+    string internal constant ADD_ORDER_SIGNER_SIGNATURE =
+        "AddOrderSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
+    string internal constant DELETE_ORDER_SIGNER_SIGNATURE =
+        "DeleteOrderSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
     event AssignPubKey(uint256 i, uint256 x, uint256 y);
     event AssignEcdsaSigner(uint256 i, address signer);
@@ -529,6 +533,32 @@ contract Verifier is
                     signedTx.tx.amount,
                     signedTx.tx.nonce,
                     signedTx.tx.appendix
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.AddOrderSigner) {
+            IEndpoint.SignedAddOrderSigner memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedAddOrderSigner)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(ADD_ORDER_SIGNER_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.signer,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.DeleteOrderSigner) {
+            IEndpoint.SignedDeleteOrderSigner memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedDeleteOrderSigner)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(DELETE_ORDER_SIGNER_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.signer,
+                    signedTx.tx.nonce
                 )
             );
         } else {

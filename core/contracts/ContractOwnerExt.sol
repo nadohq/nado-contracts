@@ -100,14 +100,6 @@ contract ContractOwnerExt is ContractOwnerStorage {
         );
     }
 
-    function deleteNlpPool(uint64 poolId) external onlyOwner {
-        IEndpoint.DeleteNlpPool memory _txn = IEndpoint.DeleteNlpPool(poolId);
-        _submitSlowModeTransaction(
-            IEndpoint.TransactionType.DeleteNlpPool,
-            abi.encode(_txn)
-        );
-    }
-
     function forceRebalanceNlpPool(int128[] calldata nlpPoolRebalanceX18)
         external
         onlyOwner
@@ -157,11 +149,43 @@ contract ContractOwnerExt is ContractOwnerStorage {
         }
     }
 
+    // Stores every product id as a 32-byte word in the queued entries (~25k gas
+    // per product), so this call alone passes the EIP-7825 per-tx gas cap at
+    // roughly 650 markets; past that it needs a product range argument.
     function dumpFees() external onlyOwnerOrFeeCollector {
-        bytes memory txn = abi.encodePacked(
-            uint8(IEndpoint.TransactionType.DumpFees)
+        uint32[] memory spotIds = spotEngine.getProductIds();
+        uint32[] memory perpIds = perpEngine.getProductIds();
+        uint32[] memory noIds;
+        for (uint256 i = 0; i < spotIds.length; i += DUMP_FEES_BATCH_SIZE) {
+            _submitDumpFees(_slice(spotIds, i), noIds);
+        }
+        for (uint256 i = 0; i < perpIds.length; i += DUMP_FEES_BATCH_SIZE) {
+            _submitDumpFees(noIds, _slice(perpIds, i));
+        }
+    }
+
+    function _slice(uint32[] memory ids, uint256 start)
+        internal
+        pure
+        returns (uint32[] memory batch)
+    {
+        uint256 end = start + DUMP_FEES_BATCH_SIZE;
+        if (end > ids.length) {
+            end = ids.length;
+        }
+        batch = new uint32[](end - start);
+        for (uint256 i = start; i < end; i++) {
+            batch[i - start] = ids[i];
+        }
+    }
+
+    function _submitDumpFees(uint32[] memory spotIds, uint32[] memory perpIds)
+        internal
+    {
+        _submitSlowModeTransaction(
+            IEndpoint.TransactionType.DumpFeesV2,
+            abi.encode(IEndpoint.DumpFeesV2(spotIds, perpIds))
         );
-        endpoint.submitSlowModeTransaction(txn);
     }
 
     function rebalanceXWithdraw(

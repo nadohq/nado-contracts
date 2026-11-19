@@ -103,7 +103,8 @@ interface IOffchainExchange {
 
     function matchOrders(IEndpoint.MatchOrdersWithSigner calldata tx) external;
 
-    function dumpFees() external;
+    function dumpFees(uint32[] calldata spotIds, uint32[] calldata perpIds)
+        external;
 
     function createIsolatedSubaccount(
         IEndpoint.CreateIsolatedSubaccount memory tx,

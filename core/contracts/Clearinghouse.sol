@@ -573,16 +573,13 @@ contract Clearinghouse is
         );
     }
 
-    function claimSequencerFees(int128[] calldata fees)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function claimSequencerFees(
+        uint32[] calldata spotIds,
+        uint32[] calldata perpIds,
+        int128[] calldata spotFees
+    ) external virtual onlyEndpoint {
         ISpotEngine spotEngine = _spotEngine();
         IPerpEngine perpEngine = _perpEngine();
-
-        uint32[] memory spotIds = spotEngine.getProductIds();
-        uint32[] memory perpIds = perpEngine.getProductIds();
 
         for (uint256 i = 0; i < spotIds.length; i++) {
             ISpotEngine.Balance memory feeBalance = spotEngine.getBalance(
@@ -592,7 +589,7 @@ contract Clearinghouse is
             spotEngine.updateBalance(
                 spotIds[i],
                 X_ACCOUNT,
-                fees[i] + feeBalance.amount
+                spotFees[i] + feeBalance.amount
             );
             spotEngine.updateBalance(
                 spotIds[i],
@@ -782,6 +779,9 @@ contract Clearinghouse is
         return uint256(int256(SLOW_MODE_FEE) * multiplier);
     }
 
+    // Only reached by DeleteNlpPool entries queued before it was disabled: it
+    // touches every product, so its gas grows with each listing and would
+    // eventually outgrow SLOW_MODE_GAS_BUDGET.
     function clearNlpPoolPosition(bytes32 subaccount)
         external
         virtual

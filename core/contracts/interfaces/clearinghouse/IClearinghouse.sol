@@ -83,7 +83,11 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
         external
         returns (uint32, int128);
 
-    function claimSequencerFees(int128[] calldata fees) external;
+    function claimSequencerFees(
+        uint32[] calldata spotIds,
+        uint32[] calldata perpIds,
+        int128[] calldata spotFees
+    ) external;
 
     /// @notice Retrieve quote ERC20 address
     function getQuote() external view returns (address);
