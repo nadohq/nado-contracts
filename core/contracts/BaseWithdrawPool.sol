@@ -120,6 +120,7 @@ abstract contract BaseWithdrawPool is
         require(transferAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
 
         int128 fee = fastWithdrawalFeeAmount(token, productId, transferAmount);
+        require(fee >= 0, "Fee must be non-negative");
 
         if (sendTo == msg.sender || sender == msg.sender) {
             require(transferAmount > uint128(fee), "Fee larger than balance");
@@ -166,9 +167,16 @@ abstract contract BaseWithdrawPool is
         uint32 productId,
         uint128 amount
     ) public view returns (int128) {
+        require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         uint8 decimals = token.decimals();
         require(decimals <= MAX_DECIMALS);
         int256 multiplier = int256(10**(MAX_DECIMALS - uint8(decimals)));
+        require(
+            multiplier == 0 ||
+                int256(uint256(amount)) <=
+                int256(uint256(INT128_MAX)) / multiplier,
+            ERR_CONVERSION_OVERFLOW
+        );
         int128 amountX18 = int128(amount) * int128(multiplier);
 
         int128 proportionalFeeX18 = FAST_WITHDRAWAL_FEE_RATE.mul(amountX18);
